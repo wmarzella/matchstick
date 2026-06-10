@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Body,
@@ -11,13 +11,11 @@ import {
   Screen,
   Spacer,
 } from '../../../src/components/ui';
-import { QUESTIONS } from '../../../src/data/questions';
+import { DEFAULT_POLES, QUESTIONS } from '../../../src/data/questions';
 import { useStore } from '../../../src/store';
-import { border, palette, space, text, type } from '../../../src/theme';
+import { border, fonts, palette, radius, space, text, textOnAccent, type } from '../../../src/theme';
 
 const SCALE = [1, 2, 3, 4, 5, 6, 7];
-/** Bubble diameters: large at the poles, small in the middle. */
-const BUBBLE = [44, 36, 28, 24, 28, 36, 44];
 
 export default function Quiz() {
   const { id, guest: guestId } = useLocalSearchParams<{ id: string; guest: string }>();
@@ -80,6 +78,7 @@ export default function Quiz() {
 
   const question = todo[index];
   const value = guest.answers[question.id];
+  const poles = question.poles ?? DEFAULT_POLES;
   const last = index === todo.length - 1;
   const answeredCount = todo.filter((q) => guest.answers[q.id] != null).length;
 
@@ -123,41 +122,44 @@ export default function Quiz() {
       )}
 
       <View style={{ flex: 1, justifyContent: 'center' }}>
-        <MonoLabel size={11} color={text.whisper} style={{ marginBottom: space.l }}>
-          Do you agree?
-        </MonoLabel>
         <Display size={36}>{question.statement}</Display>
       </View>
 
       <View style={{ paddingBottom: Math.max(insets.bottom, space.l) + space.xl }}>
-        <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          {SCALE.map((v, i) => {
+        {/* 7 rounded-square numbered cells — the match.box Likert scale */}
+        <View style={styles.scaleRow}>
+          {SCALE.map((v) => {
             const selected = value === v;
             return (
               <Pressable
                 key={v}
                 onPress={() => choose(v)}
-                hitSlop={8}
                 style={[
-                  styles.bubble,
+                  styles.cell,
                   {
-                    width: BUBBLE[i],
-                    height: BUBBLE[i],
-                    borderRadius: BUBBLE[i] / 2,
-                    borderColor: selected ? palette[event.accent] : border.active,
+                    borderColor: selected ? palette[event.accent] : border.default,
                     backgroundColor: selected ? palette[event.accent] : 'transparent',
                   },
                 ]}
-              />
+              >
+                <Text
+                  style={[
+                    styles.cellNum,
+                    { color: selected ? textOnAccent[event.accent] : text.primary },
+                  ]}
+                >
+                  {v}
+                </Text>
+              </Pressable>
             );
           })}
-        </Row>
-        <Row style={{ justifyContent: 'space-between', marginTop: space.m }}>
+        </View>
+        <Row style={{ justifyContent: 'space-between', marginTop: space.s }}>
           <MonoLabel size={10} color={text.hint}>
-            Disagree
+            {poles[0]}
           </MonoLabel>
           <MonoLabel size={10} color={text.hint}>
-            Agree
+            {poles[1]}
           </MonoLabel>
         </Row>
 
@@ -193,5 +195,14 @@ const styles = StyleSheet.create({
     marginTop: space.l,
   },
   progressFill: { height: 2, borderRadius: 1 },
-  bubble: { borderWidth: 1.5 },
+  scaleRow: { flexDirection: 'row', gap: 7, justifyContent: 'space-between' },
+  cell: {
+    flex: 1,
+    aspectRatio: 1,
+    borderWidth: 1.5,
+    borderRadius: radius.input,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cellNum: { fontFamily: fonts.sansMedium, fontSize: 16 },
 });

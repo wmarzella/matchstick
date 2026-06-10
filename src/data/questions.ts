@@ -43,7 +43,12 @@ export interface Question {
   statement: string;
   premium?: boolean;
   traits?: TraitLoadings;
+  /** Scale pole labels [min, max]. Statements default to Strongly Disagree/Agree. */
+  poles?: [string, string];
 }
+
+/** Default Likert poles for agreement statements (match.box uses these). */
+export const DEFAULT_POLES: [string, string] = ['Strongly Disagree', 'Strongly Agree'];
 
 export const THEMES: QuestionTheme[] = [
   { key: 'principles', label: 'Principles', emoji: '⚖️' },

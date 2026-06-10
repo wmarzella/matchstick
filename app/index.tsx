@@ -9,7 +9,9 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScrollingChips } from '../src/components/ScrollingChips';
 import { Body, Display, MonoLabel, PrimaryButton, Row, Spacer } from '../src/components/ui';
+import { premiumQuestions } from '../src/data/questions';
 import { useStore } from '../src/store';
 import {
   ACCENTS,
@@ -22,6 +24,32 @@ import {
   text,
   type,
 } from '../src/theme';
+
+// Two alternating rows of original premium statements for the bento preview.
+const PREMIUM_ROWS: string[][] = (() => {
+  const pool = premiumQuestions().map((q) => q.statement);
+  return [pool.filter((_, i) => i % 2 === 0).slice(0, 6), pool.filter((_, i) => i % 2 === 1).slice(0, 6)];
+})();
+
+const PREMIUM_FEATURES: { head: string; body: string; emoji: string }[] = [
+  {
+    head: 'Drop a countdown for maximum suspense',
+    body: 'In perfect sync for every guest — matches reveal after 60 seconds of rising anticipation.',
+    emoji: '⏱️',
+  },
+  {
+    head: 'Build anticipation with clues',
+    body: 'Help guests mingle and narrow down, getting closer and closer to their match.',
+    emoji: '🔎',
+  },
+  {
+    head: 'Insights reveal why each match works',
+    body: 'Let guests see under the hood — the traits and answers behind their match.',
+    emoji: '📊',
+  },
+];
+
+const PEACE_OF_MIND = ['Avoid age gaps', 'Add and remove people', 'Carry over unused seats'];
 
 const ROTATING = [
   'house party',
@@ -116,15 +144,15 @@ export default function Landing() {
             ))}
           </View>
 
-          {/* How it works */}
+          {/* 3 Steps to Great Matches */}
           <View style={{ paddingHorizontal: space.xl, marginTop: space.xxxl }}>
-            <MonoLabel style={{ textAlign: 'center', marginBottom: space.l }}>
-              How it works
-            </MonoLabel>
+            <Display size={type.h2} style={{ textAlign: 'center', marginBottom: space.xl }}>
+              3 steps to great matches
+            </Display>
             {[
-              ['01', 'Make your questionnaire', 'Pick themes or hand-pick statements. Guests answer on their phones.'],
-              ['02', 'Everyone signs in', 'Your event gets a link and QR code. No app store, no accounts.'],
-              ['03', 'Strike the match', 'The algorithm pairs your room. Matches reveal together, with receipts.'],
+              ['01', 'Guests fill out your questionnaire', 'Share a link and QR code. They answer on their phones — no app store, no accounts.'],
+              ['02', 'Run the algorithm to calculate matches', 'One tap pairs the whole room by shared values and personality.'],
+              ['03', 'Release the match results', 'Matches reveal together, with a radar chart and the reasons behind each one.'],
             ].map(([num, title, caption]) => (
               <View key={num} style={styles.step}>
                 <MonoLabel size={12} color={text.whisper}>
@@ -140,27 +168,50 @@ export default function Landing() {
             ))}
           </View>
 
-          {/* Everything included — free */}
-          <View style={{ paddingHorizontal: space.xl, marginTop: space.xxl }}>
+          {/* Get more — the premium feature bento (all free here) */}
+          <View style={{ paddingHorizontal: space.xl, marginTop: space.xxxl }}>
             <Display size={type.h2} style={{ textAlign: 'center' }}>
-              Every feature. Free.
+              Get more — <Display size={type.h2} italic>all of it free</Display>
             </Display>
             <Body color={text.hint} size={15} style={{ textAlign: 'center', marginTop: space.s }}>
-              Open source, self-hosted, no tiers, no per-guest fees.
+              The features match.box charges for, included with every event.
             </Body>
             <Spacer h={space.l} />
+
+            {/* Premium questions card with scrolling chips */}
+            <View style={styles.bentoCard}>
+              <Display size={type.h3}>
+                Include <Display size={type.h3} italic>premium questions</Display>
+              </Display>
+              <Body color={text.hint} size={14} style={{ marginTop: 2, marginBottom: space.m }}>
+                Design a more tailored questionnaire to spark conversation and make the best matches
+                possible.
+              </Body>
+              <ScrollingChips rows={PREMIUM_ROWS} accent={palette.aqua} />
+            </View>
+
+            {/* Other premium feature cards */}
+            {PREMIUM_FEATURES.map((f) => (
+              <View key={f.head} style={styles.bentoCard}>
+                <Row style={{ alignItems: 'flex-start' }}>
+                  <Text style={{ fontSize: 26, marginRight: space.m }}>{f.emoji}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Display size={type.h3}>{f.head}</Display>
+                    <Body color={text.hint} size={14} style={{ marginTop: 4 }}>
+                      {f.body}
+                    </Body>
+                  </View>
+                </Row>
+              </View>
+            ))}
+
+            {/* Plus, peace of mind */}
+            <Spacer h={space.l} />
+            <MonoLabel size={11} color={text.hint} style={{ marginBottom: space.m }}>
+              Plus, peace of mind that things run smoothly
+            </MonoLabel>
             <View style={styles.featureCard}>
-              {[
-                'Unlimited guests and events',
-                'Countdown match reveal',
-                'Why-you-matched explanations',
-                'Match quality scores',
-                'Receipts: superlatives for the room',
-                'Dedicated link and QR code',
-                'Romantic, platonic & professional modes',
-                'Age-constrained matching',
-                'Custom questionnaires',
-              ].map((feature) => (
+              {PEACE_OF_MIND.map((feature) => (
                 <Row key={feature} style={{ marginBottom: space.m }}>
                   <Text style={{ color: palette.green, fontSize: 15, marginRight: space.m }}>✓</Text>
                   <Body color={text.secondary} size={15}>
@@ -168,6 +219,12 @@ export default function Landing() {
                   </Body>
                 </Row>
               ))}
+              <Row>
+                <Text style={{ color: palette.green, fontSize: 15, marginRight: space.m }}>✓</Text>
+                <Body color={text.secondary} size={15}>
+                  Open source — MIT licensed, self-hostable
+                </Body>
+              </Row>
             </View>
           </View>
 
@@ -260,6 +317,14 @@ const styles = StyleSheet.create({
     borderColor: border.default,
     borderRadius: radius.card,
     padding: space.xl,
+  },
+  bentoCard: {
+    borderWidth: 1,
+    borderColor: border.default,
+    borderRadius: radius.card,
+    padding: space.l,
+    marginBottom: space.m,
+    overflow: 'hidden',
   },
   eventRow: {
     flexDirection: 'row',

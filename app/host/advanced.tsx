@@ -142,9 +142,18 @@ export default function Advanced() {
         ) : (
           available.map((q) => (
             <Pressable key={q.id} onPress={() => add(q.id)} style={styles.availableCard}>
-              <Body color={text.secondary} size={15} style={{ flex: 1 }}>
-                {q.statement}
-              </Body>
+              <View style={{ flex: 1 }}>
+                <Body color={text.secondary} size={15}>
+                  {q.statement}
+                </Body>
+                {q.premium && (
+                  <View style={styles.premiumBadge}>
+                    <MonoLabel size={9} color={text.hint}>
+                      Premium
+                    </MonoLabel>
+                  </View>
+                )}
+              </View>
               <Text style={{ color: text.hint, fontSize: 18, marginLeft: space.m }}>+</Text>
             </Pressable>
           ))
@@ -155,6 +164,15 @@ export default function Advanced() {
 }
 
 const styles = StyleSheet.create({
+  premiumBadge: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: border.default,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 6,
+  },
   surpriseBtn: {
     borderWidth: 1,
     borderColor: border.active,

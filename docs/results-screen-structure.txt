@@ -1,0 +1,33 @@
+match.box participant results screen (/{slug}/matches) — live DOM structure,
+captured 2026-06-10 from an authed matched participant. Route returns 404 until
+the host fires "Send matches"; goes live (200) post-reveal.
+
+page:outer
+  top-bar (logo "matchbox", serif caps, centered)
+  CountdownTimer:base            <- odometer-style rolling wheels
+    wheel.big-numbers  (items "00".."05")
+    wheel.fractions    (items ".000" ".200" ".400" ".600" ".800" repeating)
+    overlay            "You're in **Group 1**"
+  page:base
+    h1                 "The results are in."
+    p                  "**Your optimal match** for *{event title}* is:"
+    article.card.name-card        <- FLIP CARD (front/back)
+      card-front
+        strong.name    "{First}\n{Last}"   (huge serif, dark on cream)
+        details row:   "+ YOU ({label})"  |  "{date}"   (mono, uppercase)
+      card-back        (revealed on tap)
+    p                  "You're both in **Group 1**."
+    a.button.secondary-alt  [chat icon] "Send {First} a message"  + red notification-badge "1"
+    h2                 "Why you matched:"
+    p                  prose sentence; shared trait phrases in <strong>
+    h2                 "Discuss these, if you'd like:"
+    ol                 3 conversation-starter items
+    button.secondary-alt "Shuffle"
+    themes-section     "Want to choose your own questions? Create another event here."
+
+Notes:
+- Background is the standard dark surface; name-card is cream (#d8cfc5-ish) with
+  dark ink text — the visual inverse of the rest of the app.
+- "Send a message" badge is status-red circle, top-right of the button.
+- No ScaleList on this page (ScaleList appears to be used elsewhere/legacy).
+- Group concept appears even with a single group ("Group 1").

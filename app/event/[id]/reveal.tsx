@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { RadarChart } from '../../../src/components/RadarChart';
+import { ScaleComparison } from '../../../src/components/ScaleComparison';
 import {
   Body,
   Display,
@@ -181,6 +182,14 @@ export default function Reveal() {
                       <TypeBadge label="You" type={me.mbtiType} stage={me.egoStage} />
                       <TypeBadge label={name(otherId)} type={them.mbtiType} stage={them.egoStage} />
                     </Row>
+
+                    {/* Trait-by-trait linear comparison (match.box ScaleList) */}
+                    <Spacer h={space.xl} />
+                    <SectionHeading>Trait by trait</SectionHeading>
+                    <Body color={text.hint} size={14} style={{ marginBottom: space.l }}>
+                      Where each of you falls — you in {event.accent}, {name(otherId)} in cream.
+                    </Body>
+                    <ScaleComparison axes={myPair.radar} aColor={accent} bColor={palette.cream} />
                   </>
                 )}
 

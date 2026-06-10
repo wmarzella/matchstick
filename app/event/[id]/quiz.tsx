@@ -40,11 +40,37 @@ export default function Quiz() {
   );
 
   const [index, setIndex] = useState(0);
+  // Returning guests see a "Welcome back … N new questions" intro first.
+  // (Flag rather than init-from-prefilledCount, since the store hydrates async.)
+  const [introDismissed, setIntroDismissed] = useState(false);
 
   if (!event || !guest) {
     return (
       <Screen>
         <Display size={type.h2}>Session not found</Display>
+      </Screen>
+    );
+  }
+
+  // Welcome-back intro for returning guests with new questions to answer.
+  if (prefilledCount > 0 && todo.length > 0 && !introDismissed) {
+    return (
+      <Screen scroll={false} style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <Display size={type.h1} style={{ textAlign: 'center' }}>
+          Welcome back,{'\n'}
+          {guest.firstName}
+          <Display size={type.h1} italic>.</Display>
+        </Display>
+        <Spacer h={space.l} />
+        <Body color={text.hint} style={{ textAlign: 'center', maxWidth: 320 }}>
+          This event has{' '}
+          <Body color={palette[event.accent]} weight="700">
+            {todo.length} new
+          </Body>{' '}
+          {todo.length === 1 ? 'question' : 'questions'}. The rest carried over from your profile.
+        </Body>
+        <Spacer h={space.xxl} />
+        <PrimaryButton label="Continue" arrow onPress={() => setIntroDismissed(true)} />
       </Screen>
     );
   }

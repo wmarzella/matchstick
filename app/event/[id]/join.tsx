@@ -75,7 +75,7 @@ export default function Join() {
       gender: gender ?? returning?.gender,
       interestedIn: needsRomance ? interestedIn : returning?.interestedIn,
     });
-    router.replace(`/event/${event.id}/quiz?guest=${guest.id}`);
+    router.replace(`/event/${event.id}/rules?guest=${guest.id}`);
   };
 
   return (

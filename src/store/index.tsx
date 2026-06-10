@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, {
   createContext,
   ReactNode,
@@ -11,31 +10,10 @@ import React, {
 } from 'react';
 import { questionsForThemes, surpriseSet, QUESTIONS } from '../data/questions';
 import { runMatching } from '../engine/matching';
-import { DraftEvent, emptyDraft, EventRecord, Guest } from './types';
-
-const STORAGE_KEY = 'matchstick.state.v1';
-
-interface State {
-  events: EventRecord[];
-  guests: Record<string, Guest[]>; // eventId -> guests
-}
-
-interface Store extends State {
-  draft: DraftEvent;
-  setDraft: (update: Partial<DraftEvent>) => void;
-  resetDraft: () => void;
-  createEventFromDraft: () => EventRecord;
-  getEvent: (id: string) => EventRecord | undefined;
-  guestsOf: (eventId: string) => Guest[];
-  joinEvent: (eventId: string, guest: Omit<Guest, 'id' | 'answers'>) => Guest;
-  saveAnswer: (eventId: string, guestId: string, questionId: string, value: number) => void;
-  completeQuiz: (eventId: string, guestId: string) => void;
-  calculateMatches: (eventId: string) => void;
-  deleteEvent: (eventId: string) => void;
-  hydrated: boolean;
-}
-
-const StoreContext = createContext<Store | null>(null);
+import { isSupabaseConfigured, supabase } from '../supabase/client';
+import { SupabaseBackend } from '../supabase/backend';
+import { Backend, LocalBackend, Snapshot } from './backend';
+import { DraftEvent, emptyDraft, EventRecord, Guest, Profile } from './types';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -47,41 +25,83 @@ const slugify = (title: string) =>
     .replace(/\s+/g, '-')
     .slice(0, 40) || `event-${uid()}`;
 
+const normalizePhone = (phone: string) => phone.replace(/[^\d+]/g, '');
+
+interface JoinIdentity {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  age?: number;
+  gender?: Profile['gender'];
+  interestedIn?: Profile['interestedIn'];
+}
+
+interface Store extends Snapshot {
+  draft: DraftEvent;
+  setDraft: (update: Partial<DraftEvent>) => void;
+  resetDraft: () => void;
+  createEventFromDraft: () => EventRecord;
+  getEvent: (id: string) => EventRecord | undefined;
+  guestsOf: (eventId: string) => Guest[];
+  /** Find-or-create a profile by phone, link a guest, pre-fill known answers. */
+  joinEvent: (eventId: string, identity: JoinIdentity) => Guest;
+  profileByPhone: (phone: string) => Profile | undefined;
+  saveAnswer: (eventId: string, guestId: string, questionId: string, value: number) => void;
+  completeQuiz: (eventId: string, guestId: string) => void;
+  calculateMatches: (eventId: string) => void;
+  addDemoParticipants: (eventId: string, count?: number) => void;
+  removeDemoParticipants: (eventId: string) => void;
+  deleteEvent: (eventId: string) => void;
+  hydrated: boolean;
+  backendKind: 'local' | 'supabase';
+}
+
+const StoreContext = createContext<Store | null>(null);
+
+const makeBackend = (): Backend =>
+  isSupabaseConfigured() && supabase ? new SupabaseBackend(supabase) : new LocalBackend();
+
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<State>({ events: [], guests: {} });
+  const backend = useRef<Backend>(makeBackend());
+  const [state, setState] = useState<Snapshot>({ events: [], guests: {}, profiles: {} });
   const [draft, setDraftState] = useState<DraftEvent>(emptyDraft());
   const [hydrated, setHydrated] = useState(false);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remoteEcho = useRef(false); // guard: don't re-persist a remote-sourced update
 
+  // hydrate + subscribe
   useEffect(() => {
+    let unsub: (() => void) | undefined;
     (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          setState(JSON.parse(raw));
-        } else {
-          setState(seedDemo());
-        }
-      } catch {
-        setState(seedDemo());
-      } finally {
-        setHydrated(true);
+      const loaded = await backend.current.load();
+      setState(loaded ?? seedDemo());
+      setHydrated(true);
+      if (backend.current.subscribe) {
+        unsub = backend.current.subscribe((snap) => {
+          remoteEcho.current = true;
+          setState(snap);
+        });
       }
     })();
+    return () => unsub?.();
   }, []);
 
+  // persist on change (debounced); skip echoes from realtime
   useEffect(() => {
     if (!hydrated) return;
+    if (remoteEcho.current) {
+      remoteEcho.current = false;
+      return;
+    }
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
-      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state)).catch(() => {});
+      backend.current.persist(state).catch(() => {});
     }, 300);
   }, [state, hydrated]);
 
   const setDraft = useCallback((update: Partial<DraftEvent>) => {
     setDraftState((d) => ({ ...d, ...update }));
   }, []);
-
   const resetDraft = useCallback(() => setDraftState(emptyDraft()), []);
 
   const createEventFromDraft = useCallback((): EventRecord => {
@@ -114,49 +134,130 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     (id: string) => state.events.find((e) => e.id === id || e.slug === id),
     [state.events],
   );
+  const guestsOf = useCallback((eventId: string) => state.guests[eventId] ?? [], [state.guests]);
 
-  const guestsOf = useCallback(
-    (eventId: string) => state.guests[eventId] ?? [],
-    [state.guests],
-  );
-
-  const joinEvent = useCallback(
-    (eventId: string, guest: Omit<Guest, 'id' | 'answers'>): Guest => {
-      const record: Guest = { ...guest, id: uid(), answers: {}, startedAt: Date.now() };
-      setState((s) => ({
-        ...s,
-        guests: { ...s.guests, [eventId]: [...(s.guests[eventId] ?? []), record] },
-      }));
-      return record;
+  const profileByPhone = useCallback(
+    (phone: string) => {
+      const norm = normalizePhone(phone);
+      return Object.values(state.profiles).find((p) => normalizePhone(p.phone) === norm);
     },
-    [],
+    [state.profiles],
   );
+
+  const joinEvent = useCallback((eventId: string, identity: JoinIdentity): Guest => {
+    const now = Date.now();
+    const norm = normalizePhone(identity.phone);
+    let createdGuest!: Guest;
+
+    setState((s) => {
+      const event = s.events.find((e) => e.id === eventId);
+      const existing = Object.values(s.profiles).find((p) => normalizePhone(p.phone) === norm);
+
+      // find-or-create the portable profile
+      const profile: Profile = existing
+        ? {
+            ...existing,
+            // refresh demographics from this join
+            firstName: identity.firstName || existing.firstName,
+            lastName: identity.lastName || existing.lastName,
+            age: identity.age ?? existing.age,
+            gender: identity.gender ?? existing.gender,
+            interestedIn: identity.interestedIn ?? existing.interestedIn,
+            updatedAt: now,
+          }
+        : {
+            id: uid(),
+            phone: identity.phone,
+            firstName: identity.firstName,
+            lastName: identity.lastName,
+            age: identity.age,
+            gender: identity.gender,
+            interestedIn: identity.interestedIn,
+            answers: {},
+            eventsAttended: [],
+            createdAt: now,
+            updatedAt: now,
+          };
+
+      // pre-fill answers this person has already given for THIS event's questions
+      const prefilled: Record<string, number> = {};
+      const prefilledIds: string[] = [];
+      for (const qid of event?.questionIds ?? []) {
+        if (profile.answers[qid] != null) {
+          prefilled[qid] = profile.answers[qid];
+          prefilledIds.push(qid);
+        }
+      }
+
+      const guest: Guest = {
+        id: profile.id,
+        profileId: profile.id,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        phone: profile.phone,
+        age: profile.age,
+        gender: profile.gender,
+        interestedIn: profile.interestedIn,
+        answers: prefilled,
+        prefilledIds,
+        startedAt: now,
+      };
+      createdGuest = guest;
+
+      const existingGuests = s.guests[eventId] ?? [];
+      const withoutDupe = existingGuests.filter((g) => g.profileId !== profile.id);
+      return {
+        ...s,
+        profiles: { ...s.profiles, [profile.id]: profile },
+        guests: { ...s.guests, [eventId]: [...withoutDupe, guest] },
+      };
+    });
+
+    return createdGuest;
+  }, []);
 
   const saveAnswer = useCallback(
     (eventId: string, guestId: string, questionId: string, value: number) => {
-      setState((s) => ({
-        ...s,
-        guests: {
-          ...s.guests,
-          [eventId]: (s.guests[eventId] ?? []).map((g) =>
-            g.id === guestId ? { ...g, answers: { ...g.answers, [questionId]: value } } : g,
-          ),
-        },
-      }));
+      setState((s) => {
+        const guests = (s.guests[eventId] ?? []).map((g) =>
+          g.id === guestId ? { ...g, answers: { ...g.answers, [questionId]: value } } : g,
+        );
+        const guest = guests.find((g) => g.id === guestId);
+        // write through to the portable profile
+        const profiles = { ...s.profiles };
+        if (guest?.profileId && profiles[guest.profileId]) {
+          const p = profiles[guest.profileId];
+          profiles[guest.profileId] = {
+            ...p,
+            answers: { ...p.answers, [questionId]: value },
+            updatedAt: Date.now(),
+          };
+        }
+        return { ...s, guests: { ...s.guests, [eventId]: guests }, profiles };
+      });
     },
     [],
   );
 
   const completeQuiz = useCallback((eventId: string, guestId: string) => {
-    setState((s) => ({
-      ...s,
-      guests: {
-        ...s.guests,
-        [eventId]: (s.guests[eventId] ?? []).map((g) =>
-          g.id === guestId ? { ...g, completedAt: Date.now() } : g,
-        ),
-      },
-    }));
+    setState((s) => {
+      const guests = (s.guests[eventId] ?? []).map((g) =>
+        g.id === guestId ? { ...g, completedAt: Date.now() } : g,
+      );
+      const guest = guests.find((g) => g.id === guestId);
+      const profiles = { ...s.profiles };
+      if (guest?.profileId && profiles[guest.profileId]) {
+        const p = profiles[guest.profileId];
+        profiles[guest.profileId] = {
+          ...p,
+          eventsAttended: p.eventsAttended.includes(eventId)
+            ? p.eventsAttended
+            : [...p.eventsAttended, eventId],
+          updatedAt: Date.now(),
+        };
+      }
+      return { ...s, guests: { ...s.guests, [eventId]: guests }, profiles };
+    });
   }, []);
 
   const calculateMatches = useCallback((eventId: string) => {
@@ -174,10 +275,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const addDemoParticipants = useCallback((eventId: string, count = 4) => {
+    setState((s) => {
+      const event = s.events.find((e) => e.id === eventId);
+      if (!event) return s;
+      const qs = QUESTIONS.filter((q) => event.questionIds.includes(q.id));
+      const existing = s.guests[eventId] ?? [];
+      const start = existing.filter((g) => g.isDemo).length;
+      const demos = makeDemoGuests(qs.map((q) => q.id), start, count);
+      return { ...s, guests: { ...s.guests, [eventId]: [...existing, ...demos] } };
+    });
+  }, []);
+
+  const removeDemoParticipants = useCallback((eventId: string) => {
+    setState((s) => ({
+      ...s,
+      guests: { ...s.guests, [eventId]: (s.guests[eventId] ?? []).filter((g) => !g.isDemo) },
+    }));
+  }, []);
+
   const deleteEvent = useCallback((eventId: string) => {
     setState((s) => ({
       events: s.events.filter((e) => e.id !== eventId),
       guests: Object.fromEntries(Object.entries(s.guests).filter(([k]) => k !== eventId)),
+      profiles: s.profiles,
     }));
   }, []);
 
@@ -191,11 +312,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       getEvent,
       guestsOf,
       joinEvent,
+      profileByPhone,
       saveAnswer,
       completeQuiz,
       calculateMatches,
+      addDemoParticipants,
+      removeDemoParticipants,
       deleteEvent,
       hydrated,
+      backendKind: backend.current.kind,
     }),
     [
       state,
@@ -206,9 +331,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       getEvent,
       guestsOf,
       joinEvent,
+      profileByPhone,
       saveAnswer,
       completeQuiz,
       calculateMatches,
+      addDemoParticipants,
+      removeDemoParticipants,
       deleteEvent,
       hydrated,
     ],
@@ -226,21 +354,52 @@ export function useStore(): Store {
 /* --------------------------------- demo seed -------------------------------- */
 
 const DEMO_NAMES: [string, string][] = [
-  ['Ada', 'L'],
-  ['Grace', 'H'],
-  ['Alan', 'T'],
-  ['Margaret', 'H'],
-  ['Linus', 'T'],
-  ['Radia', 'P'],
-  ['Edsger', 'D'],
-  ['Barbara', 'L'],
-  ['Donald', 'K'],
-  ['Katherine', 'J'],
-  ['Vint', 'C'],
+  ['Ada', 'Lovelace'],
+  ['Grace', 'Hopper'],
+  ['Alan', 'Turing'],
+  ['Margaret', 'Hamilton'],
+  ['Linus', 'Torvalds'],
+  ['Radia', 'Perlman'],
+  ['Edsger', 'Dijkstra'],
+  ['Barbara', 'Liskov'],
+  ['Donald', 'Knuth'],
+  ['Katherine', 'Johnson'],
+  ['Vint', 'Cerf'],
 ];
 
-function seedDemo(): State {
-  const themes = ['fun', 'outlook', 'friends'] as const;
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+function hash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+function makeDemoGuests(questionIds: string[], startIndex: number, count: number): Guest[] {
+  return Array.from({ length: count }).map((_, k) => {
+    const i = startIndex + k;
+    const [firstName, lastName] = DEMO_NAMES[i % DEMO_NAMES.length];
+    const cluster = i % 3;
+    const answers: Record<string, number> = {};
+    for (const qid of questionIds) {
+      const seed = (hash(qid) + cluster * 7) % 7;
+      const wobble = (hash(qid + firstName) % 3) - 1;
+      answers[qid] = clamp(1 + ((seed + wobble + 7) % 7), 1, 7);
+    }
+    return {
+      id: `demo-${i}-${hash(firstName + lastName) % 9999}`,
+      firstName,
+      lastName,
+      phone: '',
+      answers,
+      startedAt: Date.now() - 3600_000,
+      completedAt: Date.now() - 1800_000,
+      isDemo: true,
+    };
+  });
+}
+
+function seedDemo(): Snapshot {
+  const themes = ['premium', 'outlook', 'introspective'] as const;
   const qs = questionsForThemes([...themes]);
   const event: EventRecord = {
     id: 'demo',
@@ -257,35 +416,6 @@ function seedDemo(): State {
     createdAt: Date.now(),
     isDemo: true,
   };
-
-  // Three loose "personality clusters" so demo matches look coherent.
-  const guests: Guest[] = DEMO_NAMES.map(([firstName, lastName], i) => {
-    const cluster = i % 3;
-    const answers: Record<string, number> = {};
-    for (const q of qs) {
-      const seed = (hash(q.id) + cluster * 7) % 7;
-      const wobble = (hash(q.id + firstName) % 3) - 1;
-      answers[q.id] = clamp(1 + ((seed + wobble + 7) % 7), 1, 7);
-    }
-    return {
-      id: `demo-${i}`,
-      firstName,
-      lastName,
-      phone: `+1 555 01${String(i).padStart(2, '0')}`,
-      answers,
-      startedAt: Date.now() - 3600_000,
-      completedAt: Date.now() - 1800_000,
-      isDemo: true,
-    };
-  });
-
-  return { events: [event], guests: { demo: guests } };
-}
-
-const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
-function hash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h;
+  const guests = makeDemoGuests(qs.map((q) => q.id), 0, DEMO_NAMES.length);
+  return { events: [event], guests: { demo: guests }, profiles: {} };
 }

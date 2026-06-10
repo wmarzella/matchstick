@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
+import { RadarChart } from '../../../src/components/RadarChart';
 import {
   Body,
   Display,
@@ -11,6 +12,7 @@ import {
   SectionHeading,
   Spacer,
 } from '../../../src/components/ui';
+import { egoStage } from '../../../src/engine/psychometrics';
 import { useStore } from '../../../src/store';
 import {
   border,
@@ -23,21 +25,25 @@ import {
 } from '../../../src/theme';
 
 export default function Reveal() {
-  const { id, guest: guestId } = useLocalSearchParams<{ id: string; guest?: string }>();
+  const { id, guest: guestId, teaser } = useLocalSearchParams<{
+    id: string;
+    guest?: string;
+    teaser?: string;
+  }>();
   const { getEvent, guestsOf } = useStore();
   const event = getEvent(id);
-  const [count, setCount] = useState(3);
+  const [count, setCount] = useState(teaser ? -1 : 3);
 
   useEffect(() => {
     if (count <= 0) return;
-    const t = setTimeout(() => setCount((c) => c - 1), 900);
+    const t = setTimeout(() => setCount((c) => c - 1), 850);
     return () => clearTimeout(t);
   }, [count]);
 
   const guests = guestsOf(event?.id ?? '');
   const name = (gid: string) => {
     const g = guests.find((x) => x.id === gid);
-    return g ? `${g.firstName} ${g.lastName}.` : '?';
+    return g ? `${g.firstName} ${g.lastName ? g.lastName[0] + '.' : ''}`.trim() : '?';
   };
   const phone = (gid: string) => guests.find((x) => x.id === gid)?.phone ?? '';
 
@@ -56,6 +62,9 @@ export default function Reveal() {
     );
   }
 
+  const accent = palette[event.accent];
+  const onAccent = textOnAccent[event.accent];
+
   if (!event.results) {
     return (
       <Screen scroll={false} style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -70,9 +79,31 @@ export default function Reveal() {
     );
   }
 
-  const accent = palette[event.accent];
+  // Teaser: show a held breath, not the result.
+  if (teaser) {
+    return (
+      <Screen scroll={false} style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <View style={[styles.teaserBar, { backgroundColor: accent }]} />
+        <Spacer h={space.xl} />
+        <MonoLabel size={12}>Your match is ready</MonoLabel>
+        <Spacer h={space.m} />
+        <Display size={type.h1} style={{ textAlign: 'center' }}>
+          Something’s waiting{'\n'}for you<Display size={type.h1} italic>.</Display>
+        </Display>
+        <Spacer h={space.l} />
+        <Body color={text.hint} style={{ textAlign: 'center', maxWidth: 300 }}>
+          The host will reveal everyone’s match at the same moment. Stay close.
+        </Body>
+        <Spacer h={space.xxl} />
+        <PrimaryButton
+          label="I’m ready"
+          arrow
+          onPress={() => router.replace(`/event/${event.id}/reveal?guest=${guestId ?? ''}`)}
+        />
+      </Screen>
+    );
+  }
 
-  // Synchronized-countdown moment
   if (count > 0) {
     return (
       <Screen scroll={false} style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -85,7 +116,7 @@ export default function Reveal() {
     );
   }
 
-  const { pairs, receipts } = event.results;
+  const { pairs, receipts, profiles } = event.results;
 
   return (
     <Screen>
@@ -94,47 +125,81 @@ export default function Reveal() {
       </Pressable>
       <Spacer h={space.l} />
 
-      {/* Personal match card when arriving as a guest */}
+      {/* Personal match card + radar */}
       {myPair && guestId ? (
         <>
-          <MonoLabel size={11}>Your match</MonoLabel>
-          <Spacer h={space.s} />
-          <View style={[styles.matchCard, { backgroundColor: accent }]}>
-            <Display size={type.h1} color={textOnAccent[event.accent]}>
-              {name(myPair.a === guestId ? myPair.b : myPair.a)}
-            </Display>
-            {myPair.c && (
-              <Body color={textOnAccent[event.accent]} style={{ marginTop: 4 }}>
-                …and {name(myPair.c === guestId ? myPair.b : myPair.c)} — tonight is a trio.
-              </Body>
-            )}
-            <Spacer h={space.l} />
-            <Row style={{ justifyContent: 'space-between' }}>
-              <MonoLabel size={11} color={textOnAccent[event.accent]}>
-                Match quality
-              </MonoLabel>
-              <MonoLabel size={11} color={textOnAccent[event.accent]}>
-                top {Math.max(1, 100 - myPair.quality)}%
-              </MonoLabel>
-            </Row>
-            <View style={styles.qualityTrack}>
-              <View
-                style={[
-                  styles.qualityFill,
-                  {
-                    width: `${myPair.quality}%`,
-                    backgroundColor: textOnAccent[event.accent],
-                  },
-                ]}
-              />
-            </View>
-            <Spacer h={space.l} />
-            <Body color={textOnAccent[event.accent]} size={15}>
-              Say hello: {phone(myPair.a === guestId ? myPair.b : myPair.a)}
-            </Body>
-          </View>
+          {(() => {
+            const otherId = myPair.a === guestId ? myPair.b : myPair.a;
+            const me = profiles[guestId];
+            const them = profiles[otherId];
+            return (
+              <>
+                <MonoLabel size={11}>Your match</MonoLabel>
+                <Spacer h={space.s} />
+                <View style={[styles.matchCard, { backgroundColor: accent }]}>
+                  <Display size={type.h1} color={onAccent}>
+                    {name(otherId)}
+                  </Display>
+                  {myPair.c && (
+                    <Body color={onAccent} style={{ marginTop: 4 }}>
+                      …and {name(myPair.c === guestId ? myPair.b : myPair.c)} — tonight’s a trio.
+                    </Body>
+                  )}
+                  <Spacer h={space.m} />
+                  <Row style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <Display size={type.h1} color={onAccent}>
+                      {myPair.score}%
+                    </Display>
+                    <Body color={onAccent} size={14}>
+                      {myPair.compat.headline}
+                    </Body>
+                  </Row>
+                  <Spacer h={space.m} />
+                  <Body color={onAccent} size={15}>
+                    Say hello: {phone(otherId) || '(shared at the event)'}
+                  </Body>
+                </View>
 
-          <Spacer h={space.l} />
+                {/* Radar */}
+                {me && them && (
+                  <>
+                    <Spacer h={space.xl} />
+                    <SectionHeading>How you two line up</SectionHeading>
+                    <Body color={text.hint} size={14} style={{ marginBottom: space.m }}>
+                      Big Five traits, feeling vs. thinking, and ego development —
+                      the closer the shapes, the more alike you are.
+                    </Body>
+                    <RadarChart
+                      axes={myPair.radar}
+                      aColor={accent}
+                      bColor={palette.cream}
+                      aLabel="You"
+                      bLabel={name(otherId)}
+                    />
+                    <Spacer h={space.l} />
+                    <Row style={{ gap: space.m }}>
+                      <TypeBadge label="You" type={me.mbtiType} stage={me.egoStage} />
+                      <TypeBadge label={name(otherId)} type={them.mbtiType} stage={them.egoStage} />
+                    </Row>
+                  </>
+                )}
+
+                {/* Compatibility breakdown */}
+                <Spacer h={space.xl} />
+                <SectionHeading>What’s driving the match</SectionHeading>
+                <Bar label="Shared values" value={myPair.compat.breakdown.values} accent={accent} />
+                <Bar label="Temperament fit" value={myPair.compat.breakdown.big5} accent={accent} />
+                <Bar label="Type chemistry" value={myPair.compat.breakdown.mbti} accent={accent} />
+                <Bar
+                  label="Same wavelength"
+                  value={myPair.compat.breakdown.ego}
+                  accent={accent}
+                />
+              </>
+            );
+          })()}
+
+          <Spacer h={space.xl} />
           <SectionHeading>Why you two</SectionHeading>
           {myPair.reasons.map((reason) => (
             <Row key={reason.questionId} style={{ alignItems: 'flex-start', marginBottom: space.m }}>
@@ -142,8 +207,8 @@ export default function Reveal() {
                 {reason.kind === 'both-disagree' ? '✗✗' : '✓✓'}
               </Body>
               <Body color={text.secondary} style={{ flex: 1 }}>
-                You both {reason.kind === 'both-disagree' ? 'pushed back on' : 'leaned into'}:{' '}
-                “{reason.statement}”
+                You both {reason.kind === 'both-disagree' ? 'pushed back on' : 'leaned into'}: “
+                {reason.statement}”
               </Body>
             </Row>
           ))}
@@ -151,15 +216,15 @@ export default function Reveal() {
         </>
       ) : null}
 
-      {/* Full room results (host view) */}
+      {/* Full room results */}
       <SectionHeading>The matches</SectionHeading>
       {pairs.length === 0 ? (
-        <Body color={text.whisper}>No eligible pairs — need more finished questionnaires.</Body>
+        <Body color={text.whisper}>No eligible pairs yet.</Body>
       ) : (
         pairs.map((pair, i) => (
           <View key={i} style={styles.pairRow}>
             <View style={[styles.pairBadge, { backgroundColor: accent }]}>
-              <MonoLabel size={10} color={textOnAccent[event.accent]}>
+              <MonoLabel size={10} color={onAccent}>
                 {String(i + 1).padStart(2, '0')}
               </MonoLabel>
             </View>
@@ -169,7 +234,7 @@ export default function Reveal() {
                 {pair.c ? ` ✕ ${name(pair.c)}` : ''}
               </Body>
               <Body color={text.whisper} size={13}>
-                quality {pair.quality}/100
+                {pair.score}% · {pair.compat.headline}
               </Body>
             </View>
           </View>
@@ -199,20 +264,55 @@ export default function Reveal() {
   );
 }
 
+function Bar({ label, value, accent }: { label: string; value: number; accent: string }) {
+  return (
+    <View style={{ marginBottom: space.m }}>
+      <Row style={{ justifyContent: 'space-between', marginBottom: 4 }}>
+        <Body color={text.secondary} size={14}>
+          {label}
+        </Body>
+        <MonoLabel size={11} color={text.hint}>
+          {Math.round(value * 100)}
+        </MonoLabel>
+      </Row>
+      <View style={styles.barTrack}>
+        <View style={[styles.barFill, { width: `${Math.round(value * 100)}%`, backgroundColor: accent }]} />
+      </View>
+    </View>
+  );
+}
+
+function TypeBadge({ label, type: t, stage }: { label: string; type: string; stage: string }) {
+  return (
+    <View style={styles.typeBadge}>
+      <MonoLabel size={9} color={text.whisper}>
+        {label}
+      </MonoLabel>
+      <Display size={type.h3} style={{ marginTop: 2 }}>
+        {t}
+      </Display>
+      <Body color={text.hint} size={12}>
+        {stage}
+      </Body>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  matchCard: {
-    borderRadius: radius.card,
-    padding: space.xl,
+  teaserBar: { width: 16, height: 56, borderRadius: 8 },
+  matchCard: { borderRadius: radius.card, padding: space.xl },
+  barTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(216,207,197,0.12)',
   },
-  qualityTrack: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    marginTop: space.s,
-  },
-  qualityFill: {
-    height: 4,
-    borderRadius: 2,
+  barFill: { height: 6, borderRadius: 3 },
+  typeBadge: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: border.default,
+    borderRadius: radius.input,
+    padding: space.l,
   },
   pairRow: {
     flexDirection: 'row',

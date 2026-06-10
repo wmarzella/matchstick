@@ -25,7 +25,7 @@ const GENDERS: { value: Gender; label: string }[] = [
 
 export default function Join() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getEvent, joinEvent } = useStore();
+  const { getEvent, joinEvent, profileByPhone } = useStore();
   const event = getEvent(id);
 
   const [firstName, setFirstName] = useState('');
@@ -36,6 +36,9 @@ export default function Join() {
   const [interestedIn, setInterestedIn] = useState<Gender[]>([]);
   const [code, setCode] = useState('');
   const [stage, setStage] = useState<'form' | 'verify'>('form');
+
+  // Returning guest? Their saved profile lets us skip the form entirely.
+  const returning = phone.trim().length >= 6 ? profileByPhone(phone) : undefined;
 
   if (!event) {
     return (
@@ -49,12 +52,14 @@ export default function Join() {
   const needsRomance = event.mode === 'romantic';
   const needsAge = event.ageConstrained;
 
-  const formReady =
-    firstName.trim() &&
-    lastName.trim() &&
-    phone.trim().length >= 6 &&
-    (!needsAge || Number(age) >= 16) &&
-    (!needsRomance || (gender && interestedIn.length > 0));
+  // A returning guest only needs their phone; everything else is on file.
+  const formReady = returning
+    ? phone.trim().length >= 6
+    : firstName.trim() &&
+      lastName.trim() &&
+      phone.trim().length >= 6 &&
+      (!needsAge || Number(age) >= 16) &&
+      (!needsRomance || (gender && interestedIn.length > 0));
 
   const toggleInterest = (value: Gender) =>
     setInterestedIn((list) =>
@@ -63,12 +68,12 @@ export default function Join() {
 
   const begin = () => {
     const guest = joinEvent(event.id, {
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
+      firstName: (firstName.trim() || returning?.firstName) ?? '',
+      lastName: (lastName.trim() || returning?.lastName) ?? '',
       phone: phone.trim(),
-      age: needsAge ? Number(age) : undefined,
-      gender: gender ?? undefined,
-      interestedIn: needsRomance ? interestedIn : undefined,
+      age: needsAge ? Number(age) || returning?.age : returning?.age,
+      gender: gender ?? returning?.gender,
+      interestedIn: needsRomance ? interestedIn : returning?.interestedIn,
     });
     router.replace(`/event/${event.id}/quiz?guest=${guest.id}`);
   };
@@ -92,22 +97,6 @@ export default function Join() {
       {stage === 'form' ? (
         <>
           <SectionHeading>Who are you?</SectionHeading>
-          <Row style={{ gap: space.m }}>
-            <Field
-              label="First name"
-              placeholder="Sam"
-              value={firstName}
-              onChangeText={setFirstName}
-              style={{ flex: 1 }}
-            />
-            <Field
-              label="Last name"
-              placeholder="Rivera"
-              value={lastName}
-              onChangeText={setLastName}
-              style={{ flex: 1 }}
-            />
-          </Row>
           <Field
             label="Phone number"
             placeholder="+61 400 000 000"
@@ -116,7 +105,36 @@ export default function Join() {
             onChangeText={setPhone}
             hint="Shared only with your match, never with anyone else."
           />
-          {needsAge && (
+          {returning && (
+            <View style={{ marginTop: -space.s, marginBottom: space.l }}>
+              <Body color={palette[event.accent]} size={14} weight="600">
+                Welcome back, {returning.firstName}.
+              </Body>
+              <Body color={text.hint} size={14}>
+                We’ll carry over the {Object.keys(returning.answers).length} answers on your
+                profile — you’ll only see questions you haven’t met yet.
+              </Body>
+            </View>
+          )}
+          {!returning && (
+            <Row style={{ gap: space.m }}>
+              <Field
+                label="First name"
+                placeholder="Sam"
+                value={firstName}
+                onChangeText={setFirstName}
+                style={{ flex: 1 }}
+              />
+              <Field
+                label="Last name"
+                placeholder="Rivera"
+                value={lastName}
+                onChangeText={setLastName}
+                style={{ flex: 1 }}
+              />
+            </Row>
+          )}
+          {needsAge && !returning && (
             <Field
               label="Age"
               placeholder="29"
@@ -126,7 +144,7 @@ export default function Join() {
             />
           )}
 
-          {needsRomance && (
+          {needsRomance && !returning && (
             <>
               <Spacer h={space.l} />
               <SectionHeading>I am…</SectionHeading>

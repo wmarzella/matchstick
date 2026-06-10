@@ -13,21 +13,34 @@ without a server.
 
 ## Features
 
+- **Host admin dashboard** — the full match.box flow: Signups (distribute link +
+  QR, submitted/remaining stats, add demo participants), Matching (name cloud +
+  Calculate → ranked match cards with compatibility %), Finalize, and Reveal
+  (teaser + send matches). Plus a Manage screen mirroring the whole settings
+  catalog (listing, custom link, seats, collaborators, groups, age constraints,
+  feedback) — all free.
 - **Host wizard** — matching mode (romantic / platonic / professional),
   age-constrained matching, event details, accent color, guest cap
-- **Questionnaires** — pick 1–3 themed question sets (Principles, Outlook on
-  Life, Spicy, Game Night, …) or hand-pick statements in the builder;
-  140+ original agree/disagree statements included
-- **Guest flow** — join via event link/QR, quick sign-in, one-statement-per-screen
-  quiz with a 7-point agreement scale
-- **Matching engine** — pairwise similarity scoring over answers, greedy
-  max-weight pairing, trio handling for the odd guest out, orientation
-  eligibility in romantic mode, gentle age-gap penalty when enabled
-- **The reveal** — synchronized countdown, match card with phone number,
-  "why you two" explanations, match-quality percentile
-- **Receipts** — superlatives computed from answer patterns
-  (Most Decisive, Resident Wildcard, …)
-- **Demo event** — 11 seeded guests so you can run a full reveal immediately
+- **Questionnaires** — pick 1–3 themed sets, hand-pick statements in the builder,
+  or toggle **premium questions** (the scrolling-chips panel). 150+ original
+  agree/disagree statements, each carrying psychometric trait loadings.
+- **Guest flow** — join via event link/QR, phone sign-in (real SMS OTP through
+  Supabase, or mocked locally), one-statement-per-screen 7-point agreement scale.
+- **Portable profiles** — answers are saved to a profile keyed by phone. The next
+  event you're invited to **pre-fills everything you've already answered** and
+  only asks what's new; the profile accumulates and sharpens over time.
+- **Psychometric matching** — every answer feeds a trait profile across **Big Five
+  (OCEAN)**, **Myers–Briggs** (four axes + derived type) and **Loevinger's ego
+  development** (9 stages). Compatibility blends value-alignment with trait fit
+  and developmental closeness. See [the model](#the-matching-model).
+- **Radar chart** — the reveal overlays both people across seven trait axes so you
+  can *see* how close you are, with a compatibility breakdown and MBTI/ego badges.
+- **The reveal** — synchronized countdown, match card with score, radar +
+  breakdown, "why you two" explanations, full-room results, and **receipts**
+  (superlatives from the answers).
+- **Multi-device** — optional Supabase backend with realtime signups and a
+  synchronized reveal across phones. Runs fully on-device without it.
+- **Demo event** — 11 seeded guests so you can run a full reveal immediately.
 
 ## Run it
 
@@ -57,6 +70,31 @@ Fonts are all SIL OFL and bundled in `assets/fonts/`:
 | Body | Hanken Grotesk |
 | Labels / numbers | Space Mono |
 
+## The matching model
+
+match.box's algorithm is proprietary, so this is an original, transparent model
+grounded in three published frameworks
+([src/engine/psychometrics.ts](src/engine/psychometrics.ts)):
+
+- **Big Five (OCEAN)** — each question carries signed loadings on Openness,
+  Conscientiousness, Extraversion, Agreeableness, Neuroticism. A guest's 1–7
+  answers aggregate into a 0–1 score per trait.
+- **Myers–Briggs** — four axes (E/I, S/N, T/F, J/P) scored from loadings, with
+  Big-Five fallback so the four-letter type is always defined.
+- **Loevinger ego development** — statements are tagged with the developmental
+  stage they're characteristic of (Impulsive → … → Unitive, 1–9); a guest's
+  level is the agreement-weighted mean.
+
+**Compatibility** = `0.40·value-alignment + 0.25·Big-Five fit + 0.15·MBTI fit +
+0.20·ego closeness`, where value-alignment is raw answer similarity, trait fit
+mixes similarity (O/C/A) with complementarity (E), and ego closeness rewards
+people within ~one stage. The **radar chart** plots seven normalized axes
+(O, C, E, A, Steady, Feeling, Ego) for both people.
+
+To retune, edit the `traits` loadings in
+[src/data/questions.ts](src/data/questions.ts) and the weights in
+`compatibility()`.
+
 ## Architecture
 
 ```
@@ -64,21 +102,41 @@ app/                    expo-router screens
   index.tsx             landing
   events.tsx            join an event on this device
   about.tsx             FAQ
-  host/                 setup → questions (themes or builder) → review
-  event/[id]/           event page, join, quiz, done, reveal
+  host/                 setup → questions (themes/premium/builder) → review
+  event/[id]/           admin dashboard, manage, join, quiz, done, reveal
+  profile/[id].tsx      portable profile + trait breakdown
 src/
-  theme.ts              design tokens
-  components/ui.tsx     shared components (buttons, cards, trays, wizard footer)
-  data/questions.ts     original question bank, 14 themes
-  engine/matching.ts    similarity, pairing, explanations, receipts
-  store/                React context + AsyncStorage persistence
+  theme.ts              design tokens (copied from match.box's CSS bundle)
+  components/           ui, admin (Section/ActionCard/Stat), RadarChart, ScrollingChips
+  data/questions.ts     original question bank w/ trait loadings, 15 themes
+  engine/
+    psychometrics.ts    Big Five + MBTI + Loevinger + compatibility + radar
+    matching.ts         profiles, pairing, explanations, receipts
+  store/
+    index.tsx           React context: events, guests, portable profiles
+    backend.ts          Backend interface + LocalBackend (AsyncStorage)
+  supabase/
+    client.ts           env-gated client
+    backend.ts          SupabaseBackend (snapshot sync + realtime)
+    schema.sql          tables + RLS + realtime
+docs/matchbox-reference.css   literal CSS extracted from match.box (reference)
 ```
 
-**Single-device by design.** This build has no backend: events, guests, and
-answers persist locally via AsyncStorage. The store
-([src/store/index.tsx](src/store/index.tsx)) is the only stateful module — to go
-multi-device, replace its internals with Supabase/Firebase/your API and wire a
-real SMS provider into the join screen's (clearly mocked) verification step.
+## Multi-device (Supabase)
+
+The app runs fully on-device by default (AsyncStorage). To sync across phones with
+realtime signups and a synchronized reveal:
+
+1. Create a project at [supabase.com](https://supabase.com).
+2. Run [src/supabase/schema.sql](src/supabase/schema.sql) in the SQL editor.
+3. Enable **Phone** auth (Auth → Providers) with a Twilio/MessageBird key for real
+   SMS OTP.
+4. Copy `.env.example` → `.env` and paste your project URL + anon key.
+
+The store picks the backend automatically: `SupabaseBackend` when the env vars are
+present, `LocalBackend` otherwise. Both implement the same `Backend` interface, so
+screens don't change. Answers live in the portable `answers` table keyed by
+profile — that's what makes them follow a guest to every event.
 
 ## License
 

@@ -56,6 +56,17 @@ export default function Done() {
           onPress={() => router.replace(`/event/${event.id}/reveal?guest=${guestId ?? ''}`)}
         />
         <Spacer h={space.l} />
+        {guestId ? (
+          <Body
+            color={text.secondary}
+            size={14}
+            onPress={() => router.push(`/profile/${guestId}` as never)}
+            style={{ textDecorationLine: 'underline' }}
+          >
+            see your portable profile
+          </Body>
+        ) : null}
+        <Spacer h={space.s} />
         <Body
           color={text.whisper}
           size={14}

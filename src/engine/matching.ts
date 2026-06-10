@@ -1,29 +1,40 @@
 /**
  * Matchstick matching engine.
  *
- * Guests answer statements on a 1–7 agreement scale. We score every
- * eligible pair, then greedily pair the highest-scoring couples first
- * (a max-weight matching approximation that is plenty for party-sized
- * groups). Odd guest out becomes the night's "wildcard" and is attached
- * to their best pair as a trio.
+ * Guests answer statements on a 1–7 agreement scale. For each guest we build a
+ * psychometric TraitProfile (Big Five + MBTI + Loevinger; see psychometrics.ts).
+ * We then score every eligible pair by blending raw value-alignment with trait
+ * compatibility, greedily pair the highest-scoring couples first (a max-weight
+ * matching approximation that is plenty for party-sized groups), and attach the
+ * odd guest out to their best pair as a trio.
  */
 
-import { Question, questionById } from '../data/questions';
+import { Question } from '../data/questions';
+import {
+  compatibility,
+  Compatibility,
+  radarAxes,
+  RadarAxis,
+  scoreProfile,
+  TraitProfile,
+} from './psychometrics';
 import type { EventRecord, Guest } from '../store/types';
-
-export interface MatchPair {
-  a: string; // guest ids
-  b: string;
-  c?: string; // optional trio member (odd guest out)
-  score: number; // 0..1
-  quality: number; // 0..100 percentile vs all candidate pairs
-  reasons: MatchReason[];
-}
 
 export interface MatchReason {
   questionId: string;
   statement: string;
   kind: 'both-agree' | 'both-disagree' | 'aligned';
+}
+
+export interface MatchPair {
+  a: string; // guest ids
+  b: string;
+  c?: string; // optional trio member (odd guest out)
+  score: number; // 0..100 compatibility
+  quality: number; // 0..100 percentile vs all candidate pairs
+  compat: Compatibility;
+  radar: RadarAxis[];
+  reasons: MatchReason[];
 }
 
 export interface Receipt {
@@ -36,34 +47,33 @@ export interface Receipt {
 export interface MatchResult {
   pairs: MatchPair[];
   receipts: Receipt[];
+  profiles: Record<string, TraitProfile>; // guestId -> profile
 }
 
 /* --------------------------------- scoring --------------------------------- */
 
-/** Similarity between two answer maps over the event's question set: 0..1. */
-export function similarity(
+/** Raw value alignment over the event's question set: 0..1. */
+export function valueAlignment(
   questions: Question[],
   a: Record<string, number>,
   b: Record<string, number>,
 ): number {
   let overlap = 0;
   let total = 0;
-  for (const q of questions) {
-    const av = a[q.id];
-    const bv = b[q.id];
+  for (const question of questions) {
+    const av = a[question.id];
+    const bv = b[question.id];
     if (av == null || bv == null) continue;
     overlap += 1;
-    // Per-question closeness: 1 when identical, 0 at maximum distance (6).
     total += 1 - Math.abs(av - bv) / 6;
   }
   if (overlap === 0) return 0;
   const base = total / overlap;
-  // Light confidence weighting: pairs with more answered overlap rank higher.
   const confidence = overlap / questions.length;
   return base * (0.7 + 0.3 * confidence);
 }
 
-/** Romantic eligibility: mutual orientation interest. Platonic/professional: anyone. */
+/** Romantic eligibility: mutual orientation interest. Otherwise: anyone. */
 export function eligible(event: EventRecord, a: Guest, b: Guest): boolean {
   if (event.mode !== 'romantic') return true;
   if (!a.gender || !b.gender || !a.interestedIn?.length || !b.interestedIn?.length) {
@@ -75,18 +85,27 @@ export function eligible(event: EventRecord, a: Guest, b: Guest): boolean {
 const agePenalty = (event: EventRecord, a: Guest, b: Guest): number => {
   if (!event.ageConstrained || a.age == null || b.age == null) return 0;
   const gap = Math.abs(a.age - b.age);
-  return Math.min(0.25, Math.max(0, (gap - 4) * 0.02)); // gentle, capped
+  return Math.min(0.25, Math.max(0, (gap - 4) * 0.02));
 };
 
 /* --------------------------------- pairing --------------------------------- */
 
-export function runMatching(event: EventRecord, guests: Guest[], questions: Question[]): MatchResult {
+export function runMatching(
+  event: EventRecord,
+  guests: Guest[],
+  questions: Question[],
+): MatchResult {
   const done = guests.filter((g) => g.completedAt != null);
+
+  // Build every completed guest's psychometric profile once.
+  const profiles: Record<string, TraitProfile> = {};
+  for (const g of done) profiles[g.id] = scoreProfile(questions, g.answers);
 
   interface Candidate {
     a: Guest;
     b: Guest;
     score: number;
+    compat: Compatibility;
   }
   const candidates: Candidate[] = [];
   for (let i = 0; i < done.length; i++) {
@@ -94,8 +113,10 @@ export function runMatching(event: EventRecord, guests: Guest[], questions: Ques
       const a = done[i];
       const b = done[j];
       if (!eligible(event, a, b)) continue;
-      const s = similarity(questions, a.answers, b.answers) - agePenalty(event, a, b);
-      candidates.push({ a, b, score: Math.max(0, s) });
+      const va = valueAlignment(questions, a.answers, b.answers);
+      const compat = compatibility(profiles[a.id], profiles[b.id], va);
+      const penalty = agePenalty(event, a, b) * 100;
+      candidates.push({ a, b, score: Math.max(0, compat.score - penalty), compat });
     }
   }
 
@@ -113,6 +134,8 @@ export function runMatching(event: EventRecord, guests: Guest[], questions: Ques
       b: c.b.id,
       score: c.score,
       quality: percentile(scores, c.score),
+      compat: c.compat,
+      radar: radarAxes(profiles[c.a.id], profiles[c.b.id]),
       reasons: explain(questions, c.a, c.b),
     });
   }
@@ -123,18 +146,18 @@ export function runMatching(event: EventRecord, guests: Guest[], questions: Ques
     let best: { pair: MatchPair; s: number } | null = null;
     for (const pair of pairs) {
       if (pair.c) continue;
-      const ga = done.find((g) => g.id === pair.a)!;
-      const gb = done.find((g) => g.id === pair.b)!;
       const s =
-        similarity(questions, solo.answers, ga.answers) +
-        similarity(questions, solo.answers, gb.answers);
+        valueAlignment(questions, solo.answers, byId(done, pair.a).answers) +
+        valueAlignment(questions, solo.answers, byId(done, pair.b).answers);
       if (!best || s > best.s) best = { pair, s };
     }
     if (best) best.pair.c = solo.id;
   }
 
-  return { pairs, receipts: buildReceipts(done, questions) };
+  return { pairs, receipts: buildReceipts(done, questions), profiles };
 }
+
+const byId = (guests: Guest[], id: string) => guests.find((g) => g.id === id)!;
 
 const percentile = (sorted: number[], value: number): number => {
   if (sorted.length <= 1) return 100;
@@ -146,11 +169,11 @@ const percentile = (sorted: number[], value: number): number => {
 
 function explain(questions: Question[], a: Guest, b: Guest): MatchReason[] {
   const reasons: { q: Question; gap: number; av: number; bv: number }[] = [];
-  for (const q of questions) {
-    const av = a.answers[q.id];
-    const bv = b.answers[q.id];
+  for (const question of questions) {
+    const av = a.answers[question.id];
+    const bv = b.answers[question.id];
     if (av == null || bv == null) continue;
-    reasons.push({ q, gap: Math.abs(av - bv), av, bv });
+    reasons.push({ q: question, gap: Math.abs(av - bv), av, bv });
   }
   reasons.sort((x, y) => x.gap - y.gap || extremity(y) - extremity(x));
   return reasons.slice(0, 3).map(({ q, av, bv }) => ({
@@ -165,10 +188,6 @@ const extremity = (r: { av: number; bv: number }) =>
 
 /* --------------------------------- receipts -------------------------------- */
 
-/**
- * Receipts: playful superlatives ranking guests on qualities derived
- * from their answer patterns.
- */
 function buildReceipts(guests: Guest[], questions: Question[]): Receipt[] {
   if (guests.length === 0) return [];
   const receipts: Receipt[] = [];
@@ -177,11 +196,11 @@ function buildReceipts(guests: Guest[], questions: Question[]): Receipt[] {
     pick: (g: Guest) => number,
     title: string,
     emoji: string,
-    detail: (g: Guest) => string,
+    detail: string,
   ) => {
     const ranked = [...guests].sort((x, y) => pick(y) - pick(x));
     const top = ranked[0];
-    if (top) receipts.push({ title, emoji, guestId: top.id, detail: detail(top) });
+    if (top) receipts.push({ title, emoji, guestId: top.id, detail });
   };
 
   const avgAnswer = (g: Guest) => {
@@ -194,12 +213,12 @@ function buildReceipts(guests: Guest[], questions: Question[]): Receipt[] {
   };
   const contrarian = (g: Guest) => {
     let score = 0;
-    for (const q of questions) {
-      const v = g.answers[q.id];
+    for (const question of questions) {
+      const v = g.answers[question.id];
       if (v == null) continue;
       const others = guests
         .filter((o) => o.id !== g.id)
-        .map((o) => o.answers[q.id])
+        .map((o) => o.answers[question.id])
         .filter((x): x is number => x != null);
       if (!others.length) continue;
       const mean = others.reduce((s, x) => s + x, 0) / others.length;
@@ -207,11 +226,15 @@ function buildReceipts(guests: Guest[], questions: Question[]): Receipt[] {
     }
     return score;
   };
+  const egoLevel = (g: Guest) => scoreProfile(questions, g.answers).egoLevel;
 
-  byAvg(decisiveness, 'Most Decisive', '⚡️', () => 'Never met a middle button they liked.');
-  byAvg(avgAnswer, 'Biggest Yes-Person', '🌞', () => 'Agreed with nearly everything. Delightful.');
-  byAvg((g) => -avgAnswer(g), 'Hardest to Impress', '🧊', () => 'Disagreed with the room, politely.');
-  byAvg(contrarian, 'Resident Wildcard', '🎲', () => 'Answered like nobody was watching.');
+  byAvg(decisiveness, 'Most Decisive', '⚡️', 'Never met a middle button they liked.');
+  byAvg(avgAnswer, 'Biggest Yes-Person', '🌞', 'Agreed with nearly everything. Delightful.');
+  byAvg((g) => -avgAnswer(g), 'Hardest to Impress', '🧊', 'Disagreed with the room, politely.');
+  byAvg(contrarian, 'Resident Wildcard', '🎲', 'Answered like nobody was watching.');
+  byAvg(egoLevel, 'Old Soul', '🦉', 'Sees the most shades of grey in the room.');
 
   return receipts;
 }
+
+export type { TraitProfile, Compatibility, RadarAxis };

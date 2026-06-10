@@ -149,6 +149,7 @@ export function Body({
   weight,
   style,
   onPress,
+  numberOfLines,
 }: {
   children: ReactNode;
   color?: string;
@@ -156,6 +157,7 @@ export function Body({
   weight?: '400' | '500' | '600' | '700' | '800';
   style?: TextStyle;
   onPress?: () => void;
+  numberOfLines?: number;
 }) {
   const family =
     weight === '800'
@@ -170,6 +172,7 @@ export function Body({
   return (
     <Text
       onPress={onPress}
+      numberOfLines={numberOfLines}
       style={[{ fontFamily: family, fontSize: size, lineHeight: size * 1.35, color }, style]}
     >
       {children}

@@ -6,15 +6,35 @@ export type MatchMode = 'platonic' | 'romantic' | 'professional';
 
 export type Gender = 'woman' | 'man' | 'nonbinary';
 
+/**
+ * A portable person. Identity is the phone number; answers accumulate across
+ * every event they attend, so a returning guest never re-answers a question.
+ */
+export interface Profile {
+  id: string;
+  phone: string;
+  firstName: string;
+  lastName: string;
+  age?: number;
+  gender?: Gender;
+  interestedIn?: Gender[];
+  answers: Record<string, number>; // questionId -> 1..7, accumulated over events
+  eventsAttended: string[]; // event ids
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Guest {
   id: string;
+  profileId?: string; // link to the portable Profile
   firstName: string;
   lastName: string;
   phone: string;
   age?: number;
   gender?: Gender;
   interestedIn?: Gender[];
-  answers: Record<string, number>; // questionId -> 1..7
+  answers: Record<string, number>; // questionId -> 1..7 (mirrors profile for this event)
+  prefilledIds?: string[]; // questions answered from a saved profile (not re-asked)
   startedAt?: number;
   completedAt?: number;
   isDemo?: boolean;

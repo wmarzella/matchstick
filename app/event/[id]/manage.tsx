@@ -19,7 +19,7 @@ import { border, palette, radius, space, text, type } from '../../../src/theme';
  */
 export default function Manage() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getEvent, guestsOf } = useStore();
+  const { getEvent, guestsOf, assignGroups } = useStore();
   const event = getEvent(id);
 
   if (!event) {
@@ -61,7 +61,41 @@ export default function Manage() {
         action="Change"
         onPress={() => router.push('/host/questions')}
       />
-      <SettingRow label="Groups" value="One match group" action="Set up" />
+      {/* Groups — partition the room into separate match pools */}
+      <Row style={styles.row}>
+        <View style={{ flex: 1 }}>
+          <Body color={text.primary} weight="600">
+            Groups
+          </Body>
+          <Body color={text.hint} size={14}>
+            {(event.groupCount ?? 1) === 1
+              ? 'One match group'
+              : `${event.groupCount} groups — matching stays within each`}
+          </Body>
+        </View>
+        <Row style={{ gap: space.s }}>
+          {[1, 2, 3].map((n) => (
+            <Pressable
+              key={n}
+              onPress={() => assignGroups(event.id, n)}
+              style={[
+                styles.groupChip,
+                (event.groupCount ?? 1) === n && {
+                  backgroundColor: palette[event.accent],
+                  borderColor: palette[event.accent],
+                },
+              ]}
+            >
+              <MonoLabel
+                size={11}
+                color={(event.groupCount ?? 1) === n ? '#000' : text.secondary}
+              >
+                {n}
+              </MonoLabel>
+            </Pressable>
+          ))}
+        </Row>
+      </Row>
       <SettingRow
         label="Age constraints"
         value={event.ageConstrained ? 'On' : 'Off'}
@@ -134,5 +168,14 @@ const styles = StyleSheet.create({
     borderColor: border.default,
     borderRadius: radius.card,
     padding: space.l,
+  },
+  groupChip: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: border.active,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

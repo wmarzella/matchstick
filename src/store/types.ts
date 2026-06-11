@@ -35,6 +35,8 @@ export interface Guest {
   interestedIn?: Gender[];
   answers: Record<string, number>; // questionId -> 1..7 (mirrors profile for this event)
   prefilledIds?: string[]; // questions answered from a saved profile (not re-asked)
+  /** Match group (1-based) when the event uses multiple groups. */
+  group?: number;
   startedAt?: number;
   completedAt?: number;
   isDemo?: boolean;
@@ -53,10 +55,31 @@ export interface EventRecord {
   themes: ThemeKey[];
   questionIds: string[]; // resolved questionnaire
   createdAt: number;
+  /** When the host fired Send Matches: countdown target everyone reveals at. */
+  revealAt?: number;
   revealedAt?: number;
-  results?: MatchResult;
+  /** Reveal options (match.box "Send matches" OPTIONS). */
+  revealFullNames?: boolean; // default false → last initial only
+  sharePhones?: boolean; // default false → in-app messages only
+  /** Number of match groups; guests are partitioned and matched within groups. */
+  groupCount?: number;
+  results?: MatchResult; // latest round
+  /** All rounds, oldest first (results === rounds[rounds.length-1]). */
+  rounds?: MatchResult[];
   isDemo?: boolean;
 }
+
+/** In-app message between matched guests (the phone-relay alternative). */
+export interface Message {
+  id: string;
+  eventId: string;
+  pairKey: string; // sorted guest ids joined with '+'
+  fromGuestId: string; // 'system' for the opener
+  text: string;
+  at: number;
+}
+
+export const pairKeyOf = (a: string, b: string): string => [a, b].sort().join('+');
 
 export interface DraftEvent {
   title: string;

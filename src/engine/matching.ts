@@ -90,10 +90,18 @@ const agePenalty = (event: EventRecord, a: Guest, b: Guest): number => {
 
 /* --------------------------------- pairing --------------------------------- */
 
+export interface MatchingOptions {
+  /** Pair keys (sorted ids joined '+') from earlier rounds to exclude. */
+  excludePairKeys?: Set<string>;
+}
+
+const keyOf = (x: string, y: string) => [x, y].sort().join('+');
+
 export function runMatching(
   event: EventRecord,
   guests: Guest[],
   questions: Question[],
+  options: MatchingOptions = {},
 ): MatchResult {
   const done = guests.filter((g) => g.completedAt != null);
 
@@ -113,6 +121,10 @@ export function runMatching(
       const a = done[i];
       const b = done[j];
       if (!eligible(event, a, b)) continue;
+      // Multiple groups: only match within the same group.
+      if ((a.group ?? 1) !== (b.group ?? 1)) continue;
+      // Multi-round: never repeat a pairing from an earlier round.
+      if (options.excludePairKeys?.has(keyOf(a.id, b.id))) continue;
       const va = valueAlignment(questions, a.answers, b.answers);
       const compat = compatibility(profiles[a.id], profiles[b.id], va);
       const penalty = agePenalty(event, a, b) * 100;

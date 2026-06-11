@@ -8,7 +8,6 @@ import {
   MonoLabel,
   PrimaryButton,
   RadioCard,
-  Row,
   Screen,
   SectionHeading,
   Spacer,
@@ -23,21 +22,22 @@ const GENDERS: { value: Gender; label: string }[] = [
   { value: 'nonbinary', label: 'Non-binary' },
 ];
 
+/**
+ * Guest sign-in: phone-first (the questionnaire collects name/age, matching the
+ * real flow). Romantic events also ask gender + interest here.
+ */
 export default function Join() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getEvent, joinEvent, profileByPhone } = useStore();
   const event = getEvent(id);
 
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
-  const [age, setAge] = useState('');
   const [gender, setGender] = useState<Gender | null>(null);
   const [interestedIn, setInterestedIn] = useState<Gender[]>([]);
   const [code, setCode] = useState('');
   const [stage, setStage] = useState<'form' | 'verify'>('form');
 
-  // Returning guest? Their saved profile lets us skip the form entirely.
+  // Returning guest? Their saved profile carries everything.
   const returning = phone.trim().length >= 6 ? profileByPhone(phone) : undefined;
 
   if (!event) {
@@ -50,16 +50,10 @@ export default function Join() {
 
   const accent = palette[event.accent];
   const needsRomance = event.mode === 'romantic';
-  const needsAge = event.ageConstrained;
 
-  // A returning guest only needs their phone; everything else is on file.
-  const formReady = returning
-    ? phone.trim().length >= 6
-    : firstName.trim() &&
-      lastName.trim() &&
-      phone.trim().length >= 6 &&
-      (!needsAge || Number(age) >= 16) &&
-      (!needsRomance || (gender && interestedIn.length > 0));
+  const formReady =
+    phone.trim().length >= 6 &&
+    (!needsRomance || returning || (gender && interestedIn.length > 0));
 
   const toggleInterest = (value: Gender) =>
     setInterestedIn((list) =>
@@ -68,12 +62,12 @@ export default function Join() {
 
   const begin = () => {
     const guest = joinEvent(event.id, {
-      firstName: (firstName.trim() || returning?.firstName) ?? '',
-      lastName: (lastName.trim() || returning?.lastName) ?? '',
+      firstName: returning?.firstName ?? '',
+      lastName: returning?.lastName ?? '',
       phone: phone.trim(),
-      age: needsAge ? Number(age) || returning?.age : returning?.age,
+      age: returning?.age,
       gender: gender ?? returning?.gender,
-      interestedIn: needsRomance ? interestedIn : returning?.interestedIn,
+      interestedIn: needsRomance ? (interestedIn.length ? interestedIn : returning?.interestedIn) : undefined,
     });
     router.replace(`/event/${event.id}/rules?guest=${guest.id}`);
   };
@@ -85,63 +79,35 @@ export default function Join() {
       </MonoLabel>
       <Spacer h={space.s} />
       <Display size={type.h1}>
-        Find your match<Display size={type.h1} color={accent}>.</Display>
+        What’s your number<Display size={type.h1} color={accent}>?</Display>
       </Display>
       <Body color={text.hint} style={{ marginTop: space.s }}>
-        a Matchstick event hosted by {event.hostName}. Answer honestly — the algorithm does the
-        rest.
+        We’ll send you a code to make sure it’s you. a Matchstick event hosted by{' '}
+        {event.hostName}.
       </Body>
 
       <Spacer h={space.xxl} />
 
       {stage === 'form' ? (
         <>
-          <SectionHeading>Who are you?</SectionHeading>
           <Field
             label="Phone number"
             placeholder="+61 400 000 000"
             keyboardType="phone-pad"
             value={phone}
             onChangeText={setPhone}
-            hint="Shared only with your match, never with anyone else."
+            hint="Used as your identity — your answers follow it between events."
           />
           {returning && (
             <View style={{ marginTop: -space.s, marginBottom: space.l }}>
-              <Body color={palette[event.accent]} size={14} weight="600">
+              <Body color={accent} size={14} weight="600">
                 Welcome back, {returning.firstName}.
               </Body>
               <Body color={text.hint} size={14}>
-                We’ll carry over the {Object.keys(returning.answers).length} answers on your
-                profile — you’ll only see questions you haven’t met yet.
+                {Object.keys(returning.answers).length} answers on file — you’ll only see
+                what’s new.
               </Body>
             </View>
-          )}
-          {!returning && (
-            <Row style={{ gap: space.m }}>
-              <Field
-                label="First name"
-                placeholder="Sam"
-                value={firstName}
-                onChangeText={setFirstName}
-                style={{ flex: 1 }}
-              />
-              <Field
-                label="Last name"
-                placeholder="Rivera"
-                value={lastName}
-                onChangeText={setLastName}
-                style={{ flex: 1 }}
-              />
-            </Row>
-          )}
-          {needsAge && !returning && (
-            <Field
-              label="Age"
-              placeholder="29"
-              keyboardType="number-pad"
-              value={age}
-              onChangeText={setAge}
-            />
           )}
 
           {needsRomance && !returning && (
@@ -173,20 +139,28 @@ export default function Join() {
           )}
 
           <Spacer h={space.l} />
-          <PrimaryButton
-            label="Continue"
-            disabled={!formReady}
-            onPress={() => setStage('verify')}
-          />
+          <PrimaryButton label="Continue" disabled={!formReady} onPress={() => setStage('verify')} />
+          <Spacer h={space.l} />
+          <Body color={text.whisper} size={14} style={{ textAlign: 'center' }}>
+            or,{' '}
+            <Body
+              color={text.hint}
+              size={14}
+              style={{ textDecorationLine: 'underline' }}
+              onPress={() => setStage('verify')}
+            >
+              continue with WhatsApp
+            </Body>
+          </Body>
         </>
       ) : (
         <>
-          <SectionHeading>Check your phone</SectionHeading>
+          <SectionHeading>Verify your number</SectionHeading>
           <Body color={text.hint} style={{ marginBottom: space.l }}>
-            We texted a code to {phone}.{' '}
+            Enter the code we sent to {phone}.{' '}
             <Body color={text.whisper}>
-              (Demo build: no SMS is actually sent — any 4 digits work. Wire up an SMS provider
-              in production; see the README.)
+              (Demo build: no SMS is actually sent — any 4 digits work. Wire Supabase phone
+              auth for the real thing; see the README.)
             </Body>
           </Body>
           <Field
@@ -198,7 +172,7 @@ export default function Join() {
             onChangeText={setCode}
           />
           <PrimaryButton
-            label="Start the questionnaire"
+            label="Continue"
             arrow
             disabled={code.trim().length !== 4}
             onPress={begin}

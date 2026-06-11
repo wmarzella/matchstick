@@ -13,7 +13,15 @@ import { runMatching } from '../engine/matching';
 import { isSupabaseConfigured, supabase } from '../supabase/client';
 import { SupabaseBackend } from '../supabase/backend';
 import { Backend, LocalBackend, Snapshot } from './backend';
-import { DraftEvent, emptyDraft, EventRecord, Guest, Profile } from './types';
+import {
+  DraftEvent,
+  emptyDraft,
+  EventRecord,
+  Guest,
+  Message,
+  pairKeyOf,
+  Profile,
+} from './types';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -47,8 +55,24 @@ interface Store extends Snapshot {
   joinEvent: (eventId: string, identity: JoinIdentity) => Guest;
   profileByPhone: (phone: string) => Profile | undefined;
   saveAnswer: (eventId: string, guestId: string, questionId: string, value: number) => void;
+  /** Set/refresh a guest's name + age from the questionnaire intro pages. */
+  updateGuestIdentity: (
+    eventId: string,
+    guestId: string,
+    identity: { firstName?: string; lastName?: string; age?: number },
+  ) => void;
   completeQuiz: (eventId: string, guestId: string) => void;
   calculateMatches: (eventId: string) => void;
+  /** Fire the reveal: schedules the synchronized countdown 60s out. */
+  sendMatches: (eventId: string) => void;
+  /** Next round: re-match excluding all previous rounds' pairings. */
+  strikeNextRound: (eventId: string) => void;
+  /** Reveal options + group count etc. */
+  updateEventSettings: (eventId: string, update: Partial<EventRecord>) => void;
+  /** Partition guests round-robin into N match groups. */
+  assignGroups: (eventId: string, count: number) => void;
+  messagesFor: (eventId: string, pairKey: string) => Message[];
+  sendMessage: (eventId: string, pairKey: string, fromGuestId: string, text: string) => void;
   addDemoParticipants: (eventId: string, count?: number) => void;
   removeDemoParticipants: (eventId: string) => void;
   deleteEvent: (eventId: string) => void;
@@ -63,7 +87,12 @@ const makeBackend = (): Backend =>
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const backend = useRef<Backend>(makeBackend());
-  const [state, setState] = useState<Snapshot>({ events: [], guests: {}, profiles: {} });
+  const [state, setState] = useState<Snapshot>({
+    events: [],
+    guests: {},
+    profiles: {},
+    messages: [],
+  });
   const [draft, setDraftState] = useState<DraftEvent>(emptyDraft());
   const [hydrated, setHydrated] = useState(false);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -74,7 +103,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let unsub: (() => void) | undefined;
     (async () => {
       const loaded = await backend.current.load();
-      setState(loaded ?? seedDemo());
+      // older persisted snapshots predate `messages`
+      setState(loaded ? { ...loaded, messages: loaded.messages ?? [] } : seedDemo());
       setHydrated(true);
       if (backend.current.subscribe) {
         unsub = backend.current.subscribe((snap) => {
@@ -269,11 +299,135 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return {
         ...s,
         events: s.events.map((e) =>
-          e.id === eventId ? { ...e, results, revealedAt: Date.now() } : e,
+          e.id === eventId
+            ? { ...e, results, rounds: [...(e.rounds ?? []).slice(0, -1), results] }
+            : e,
         ),
       };
     });
   }, []);
+
+  const updateGuestIdentity = useCallback(
+    (
+      eventId: string,
+      guestId: string,
+      identity: { firstName?: string; lastName?: string; age?: number },
+    ) => {
+      setState((s) => {
+        const guests = (s.guests[eventId] ?? []).map((g) =>
+          g.id === guestId ? { ...g, ...stripUndefined(identity) } : g,
+        );
+        const guest = guests.find((g) => g.id === guestId);
+        const profiles = { ...s.profiles };
+        if (guest?.profileId && profiles[guest.profileId]) {
+          profiles[guest.profileId] = {
+            ...profiles[guest.profileId],
+            ...stripUndefined(identity),
+            updatedAt: Date.now(),
+          };
+        }
+        return { ...s, guests: { ...s.guests, [eventId]: guests }, profiles };
+      });
+    },
+    [],
+  );
+
+  /** Fire the reveal: lock results as a round, schedule the synced countdown,
+   *  and drop the system opener message into every matched pair's thread. */
+  const sendMatches = useCallback((eventId: string) => {
+    setState((s) => {
+      const event = s.events.find((e) => e.id === eventId);
+      if (!event?.results) return s;
+      const revealAt = Date.now() + 60_000;
+      const rounds = [...(event.rounds ?? [])];
+      if (rounds[rounds.length - 1] !== event.results) rounds.push(event.results);
+      const openers: Message[] = event.results.pairs
+        .map((p) => ({ pk: pairKeyOf(p.a, p.b), score: p.score }))
+        .filter(({ pk }) => !s.messages.some((m) => m.eventId === eventId && m.pairKey === pk))
+        .map(({ pk, score }) => ({
+          id: uid(),
+          eventId,
+          pairKey: pk,
+          fromGuestId: 'system',
+          text: `You two matched at ${score}%. Say hello — the algorithm did its part.`,
+          at: Date.now(),
+        }));
+      return {
+        ...s,
+        events: s.events.map((e) =>
+          e.id === eventId ? { ...e, rounds, revealAt, revealedAt: revealAt } : e,
+        ),
+        messages: [...s.messages, ...openers],
+      };
+    });
+  }, []);
+
+  const strikeNextRound = useCallback((eventId: string) => {
+    setState((s) => {
+      const event = s.events.find((e) => e.id === eventId);
+      if (!event) return s;
+      const questions = QUESTIONS.filter((q) => event.questionIds.includes(q.id));
+      const exclude = new Set<string>();
+      for (const round of event.rounds ?? []) {
+        for (const p of round.pairs) exclude.add(pairKeyOf(p.a, p.b));
+      }
+      const results = runMatching(event, s.guests[eventId] ?? [], questions, {
+        excludePairKeys: exclude,
+      });
+      return {
+        ...s,
+        events: s.events.map((e) =>
+          e.id === eventId
+            ? { ...e, results, rounds: [...(e.rounds ?? []), results], revealAt: Date.now() + 60_000 }
+            : e,
+        ),
+      };
+    });
+  }, []);
+
+  const updateEventSettings = useCallback((eventId: string, update: Partial<EventRecord>) => {
+    setState((s) => ({
+      ...s,
+      events: s.events.map((e) => (e.id === eventId ? { ...e, ...update } : e)),
+    }));
+  }, []);
+
+  const assignGroups = useCallback((eventId: string, count: number) => {
+    setState((s) => {
+      const guests = (s.guests[eventId] ?? []).map((g, i) => ({
+        ...g,
+        group: count > 1 ? (i % count) + 1 : undefined,
+      }));
+      return {
+        ...s,
+        guests: { ...s.guests, [eventId]: guests },
+        events: s.events.map((e) => (e.id === eventId ? { ...e, groupCount: count } : e)),
+      };
+    });
+  }, []);
+
+  const messagesFor = useCallback(
+    (eventId: string, pairKey: string) =>
+      state.messages
+        .filter((m) => m.eventId === eventId && m.pairKey === pairKey)
+        .sort((a, b) => a.at - b.at),
+    [state.messages],
+  );
+
+  const sendMessage = useCallback(
+    (eventId: string, pairKey: string, fromGuestId: string, text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      setState((s) => ({
+        ...s,
+        messages: [
+          ...s.messages,
+          { id: uid(), eventId, pairKey, fromGuestId, text: trimmed, at: Date.now() },
+        ],
+      }));
+    },
+    [],
+  );
 
   const addDemoParticipants = useCallback((eventId: string, count = 4) => {
     setState((s) => {
@@ -299,6 +453,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       events: s.events.filter((e) => e.id !== eventId),
       guests: Object.fromEntries(Object.entries(s.guests).filter(([k]) => k !== eventId)),
       profiles: s.profiles,
+      messages: s.messages.filter((m) => m.eventId !== eventId),
     }));
   }, []);
 
@@ -314,8 +469,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       joinEvent,
       profileByPhone,
       saveAnswer,
+      updateGuestIdentity,
       completeQuiz,
       calculateMatches,
+      sendMatches,
+      strikeNextRound,
+      updateEventSettings,
+      assignGroups,
+      messagesFor,
+      sendMessage,
       addDemoParticipants,
       removeDemoParticipants,
       deleteEvent,
@@ -333,8 +495,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       joinEvent,
       profileByPhone,
       saveAnswer,
+      updateGuestIdentity,
       completeQuiz,
       calculateMatches,
+      sendMatches,
+      strikeNextRound,
+      updateEventSettings,
+      assignGroups,
+      messagesFor,
+      sendMessage,
       addDemoParticipants,
       removeDemoParticipants,
       deleteEvent,
@@ -368,6 +537,14 @@ const DEMO_NAMES: [string, string][] = [
 ];
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+/** Drop undefined values so spreads don't clobber existing fields. */
+function stripUndefined<T extends object>(obj: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v !== undefined),
+  ) as Partial<T>;
+}
+
 function hash(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
@@ -417,5 +594,5 @@ function seedDemo(): Snapshot {
     isDemo: true,
   };
   const guests = makeDemoGuests(qs.map((q) => q.id), 0, DEMO_NAMES.length);
-  return { events: [event], guests: { demo: guests }, profiles: {} };
+  return { events: [event], guests: { demo: guests }, profiles: {}, messages: [] };
 }

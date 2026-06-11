@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Linking, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { CountdownOdometer } from '../../../src/components/CountdownOdometer';
 import { RadarChart } from '../../../src/components/RadarChart';
 import { ScaleComparison } from '../../../src/components/ScaleComparison';
@@ -17,6 +17,7 @@ import {
 import { QUESTIONS } from '../../../src/data/questions';
 import { pickStarters } from '../../../src/data/starters';
 import { useStore } from '../../../src/store';
+import { pairKeyOf } from '../../../src/store/types';
 import {
   border,
   ink,
@@ -35,24 +36,38 @@ export default function Reveal() {
     guest?: string;
     teaser?: string;
   }>();
-  const { getEvent, guestsOf } = useStore();
+  const { getEvent, guestsOf, messagesFor } = useStore();
   const event = getEvent(id);
-  const [count, setCount] = useState(teaser ? -1 : 5);
   const [flipped, setFlipped] = useState(false);
   const [starterSeed, setStarterSeed] = useState(0);
 
+  // Synchronized countdown: driven by the host-scheduled revealAt timestamp,
+  // so every device counts to the same moment (synced via Supabase).
+  const [now, setNow] = useState(() => Date.now());
+  const revealAt = event?.revealAt;
+  const secondsLeft =
+    !teaser && revealAt ? Math.max(0, Math.ceil((revealAt - now) / 1000)) : 0;
   useEffect(() => {
-    if (count <= 0) return;
-    const t = setTimeout(() => setCount((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [count]);
+    if (teaser || !revealAt || revealAt <= Date.now()) return;
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [revealAt, teaser]);
 
   const guests = guestsOf(event?.id ?? '');
   const guestById = (gid: string) => guests.find((x) => x.id === gid);
   const firstName = (gid: string) => guestById(gid)?.firstName ?? '?';
-  const fullName = (gid: string) => {
+  // Name privacy: last initial only unless the host enabled full last names.
+  const showFull = event?.revealFullNames === true;
+  const cardName = (gid: string) => {
     const g = guestById(gid);
-    return g ? `${g.firstName}\n${g.lastName}` : '?';
+    if (!g) return '?';
+    const last = showFull ? g.lastName : g.lastName ? `${g.lastName[0]}.` : '';
+    return `${g.firstName}\n${last}`.trim();
+  };
+  const listName = (gid: string) => {
+    const g = guestById(gid);
+    if (!g) return '?';
+    return `${g.firstName} ${showFull ? g.lastName : g.lastName ? g.lastName[0] + '.' : ''}`.trim();
   };
 
   const myPair: MatchPair | undefined = useMemo(() => {
@@ -112,11 +127,17 @@ export default function Reveal() {
     );
   }
 
-  // Synchronized countdown — odometer wheels with the group overlay.
-  if (count > 0) {
+  // Synchronized countdown — odometer wheels with the group overlay. Every
+  // device counts to the same revealAt moment the host scheduled.
+  if (secondsLeft > 0) {
+    const myGroup = guestId ? guestById(guestId)?.group ?? 1 : 1;
     return (
       <Screen scroll={false} style={{ justifyContent: 'center' }}>
-        <CountdownOdometer seconds={count} accent={accent} />
+        <CountdownOdometer
+          seconds={secondsLeft}
+          accent={accent}
+          overlayStrong={`Group ${myGroup}`}
+        />
         <Body color={text.whisper} style={{ textAlign: 'center' }}>
           Everyone sees this together.
         </Body>
@@ -134,6 +155,10 @@ export default function Reveal() {
     const me = profiles[guestId];
     const them = profiles[otherId];
     const date = event.date || new Date(event.createdAt).toISOString().slice(0, 10);
+    const myGroup = guestById(guestId)?.group ?? 1;
+    const pairKey = pairKeyOf(guestId, otherId);
+    const unread = messagesFor(event.id, pairKey).filter((m) => m.fromGuestId !== guestId).length;
+    const roundCount = event.rounds?.length ?? 1;
 
     // "Why you matched" prose from the engine's aligned statements.
     const leans = myPair.reasons.filter((r) => r.kind !== 'both-disagree');
@@ -144,6 +169,14 @@ export default function Reveal() {
 
     return (
       <>
+        {roundCount > 1 && (
+          <>
+            <MonoLabel size={11} color={accent}>
+              Round {roundCount}
+            </MonoLabel>
+            <Spacer h={space.s} />
+          </>
+        )}
         <Display size={type.hero}>The results are in.</Display>
         <Spacer h={space.m} />
         <Body color={text.hint} size={18}>
@@ -159,7 +192,7 @@ export default function Reveal() {
           {!flipped ? (
             <>
               <Display size={56} color={ink.primary} style={{ lineHeight: 58 }}>
-                {fullName(otherId)}
+                {cardName(otherId)}
               </Display>
               <Spacer h={space.xl} />
               <Row style={{ justifyContent: 'space-between' }}>
@@ -178,10 +211,12 @@ export default function Reveal() {
               </MonoLabel>
               <Spacer h={space.m} />
               <Body color={ink.primary} weight="700" size={20}>
-                {other?.firstName} {other?.lastName}
+                {listName(otherId)}
               </Body>
               <Body color={ink.secondary} size={16} style={{ marginTop: 4 }}>
-                {other?.phone ? other.phone : 'Number shared at the event'}
+                {event.sharePhones && other?.phone
+                  ? other.phone
+                  : 'Numbers stay private — message in-app below.'}
               </Body>
               <Spacer h={space.m} />
               <Row style={{ justifyContent: 'space-between' }}>
@@ -200,29 +235,33 @@ export default function Reveal() {
         <Body color={text.hint}>
           You’re both in{' '}
           <Body color={text.primary} weight="700">
-            Group 1
+            Group {myGroup}
           </Body>
           .
         </Body>
         <Spacer h={space.l} />
 
-        {/* Message button with notification badge */}
+        {/* Message button with notification badge → in-app thread */}
         <View>
           <Pressable
             style={styles.messageBtn}
-            onPress={() => {
-              if (other?.phone) Linking.openURL(`sms:${other.phone}`).catch(() => {});
-            }}
+            onPress={() =>
+              router.push(
+                `/event/${event.id}/chat?pair=${encodeURIComponent(pairKey)}&guest=${guestId}` as never,
+              )
+            }
           >
             <MonoLabel size={12} color={text.secondary}>
               💬 Send {firstName(otherId)} a message
             </MonoLabel>
           </Pressable>
-          <View style={styles.badge}>
-            <Body color="#fff" size={11} weight="700">
-              1
-            </Body>
-          </View>
+          {unread > 0 && (
+            <View style={styles.badge}>
+              <Body color="#fff" size={11} weight="700">
+                {unread}
+              </Body>
+            </View>
+          )}
         </View>
 
         {/* Why you matched */}
@@ -348,9 +387,8 @@ export default function Reveal() {
             </View>
             <View style={{ flex: 1 }}>
               <Body color={text.primary} weight="600">
-                {firstName(pair.a)} {guestById(pair.a)?.lastName?.[0] ?? ''}. ✕{' '}
-                {firstName(pair.b)} {guestById(pair.b)?.lastName?.[0] ?? ''}.
-                {pair.c ? ` ✕ ${firstName(pair.c)}` : ''}
+                {listName(pair.a)} ✕ {listName(pair.b)}
+                {pair.c ? ` ✕ ${listName(pair.c)}` : ''}
               </Body>
               <Body color={text.whisper} size={13}>
                 {pair.score}% · {pair.compat.headline}

@@ -21,11 +21,12 @@ export class SupabaseBackend implements Backend {
   constructor(private sb: SupabaseClient) {}
 
   async load(): Promise<Snapshot | null> {
-    const [profilesRes, answersRes, eventsRes, partsRes] = await Promise.all([
+    const [profilesRes, answersRes, eventsRes, partsRes, messagesRes] = await Promise.all([
       this.sb.from('profiles').select('*'),
       this.sb.from('answers').select('*'),
       this.sb.from('events').select('*'),
       this.sb.from('event_participants').select('*'),
+      this.sb.from('match_messages').select('*'),
     ]);
     if (profilesRes.error || eventsRes.error) return null;
 
@@ -65,8 +66,22 @@ export class SupabaseBackend implements Backend {
       themes: (r.themes ?? []) as ThemeKey[],
       questionIds: r.question_ids ?? [],
       createdAt: Date.parse(r.created_at) || Date.now(),
+      revealAt: r.reveal_at ? Date.parse(r.reveal_at) : undefined,
       revealedAt: r.revealed_at ? Date.parse(r.revealed_at) : undefined,
+      revealFullNames: r.reveal_full_names ?? false,
+      sharePhones: r.share_phones ?? false,
+      groupCount: r.group_count ?? 1,
       results: r.results ?? undefined,
+      rounds: r.rounds ?? undefined,
+    }));
+
+    const messages = (messagesRes.data ?? []).map((m) => ({
+      id: m.id,
+      eventId: m.event_id,
+      pairKey: m.pair_key,
+      fromGuestId: m.from_profile,
+      text: m.body,
+      at: Date.parse(m.created_at) || Date.now(),
     }));
 
     // guests per event, assembled from participants + profiles
@@ -96,7 +111,7 @@ export class SupabaseBackend implements Backend {
       profile.eventsAttended.push(p.event_id);
     }
 
-    return { events, guests, profiles };
+    return { events, guests, profiles, messages };
   }
 
   async persist(snap: Snapshot): Promise<void> {
@@ -154,8 +169,13 @@ export class SupabaseBackend implements Backend {
       accent: e.accent,
       themes: e.themes,
       question_ids: e.questionIds,
+      reveal_at: e.revealAt ? new Date(e.revealAt).toISOString() : null,
       revealed_at: e.revealedAt ? new Date(e.revealedAt).toISOString() : null,
+      reveal_full_names: e.revealFullNames ?? false,
+      share_phones: e.sharePhones ?? false,
+      group_count: e.groupCount ?? 1,
       results: e.results ?? null,
+      rounds: e.rounds ?? null,
     }));
 
     // Order matters for FKs: profiles → answers/events → participants.
@@ -168,6 +188,16 @@ export class SupabaseBackend implements Backend {
       await this.sb.from('event_participants').upsert(participantRows, {
         onConflict: 'event_id,profile_id',
       });
+
+    const messageRows = snap.messages.map((m) => ({
+      id: m.id.length === 36 ? m.id : undefined, // let pg generate uuids for local ids
+      event_id: m.eventId,
+      pair_key: m.pairKey,
+      from_profile: m.fromGuestId,
+      body: m.text,
+      created_at: new Date(m.at).toISOString(),
+    }));
+    if (messageRows.length) await this.sb.from('match_messages').upsert(messageRows as any[]);
   }
 
   subscribe(onChange: (snap: Snapshot) => void): () => void {
@@ -182,6 +212,7 @@ export class SupabaseBackend implements Backend {
     const channel = this.sb
       .channel('matchstick')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'event_participants' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_messages' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'answers' }, refresh)
       .subscribe();

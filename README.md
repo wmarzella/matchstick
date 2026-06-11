@@ -24,8 +24,13 @@ without a server.
 - **Questionnaires** — pick 1–3 themed sets, hand-pick statements in the builder,
   or toggle **premium questions** (the scrolling-chips panel). 150+ original
   agree/disagree statements, each carrying psychometric trait loadings.
-- **Guest flow** — join via event link/QR, phone sign-in (real SMS OTP through
-  Supabase, or mocked locally), one-statement-per-screen 7-point agreement scale.
+- **Guest flow** — join via event link/QR, phone-first sign-in (real SMS OTP
+  through Supabase, or mocked locally; WhatsApp-style alternative), a **ground
+  rules card with a sign-to-agree signature pad**, then the questionnaire: a
+  vertically paged stack opening with name → age pages, one Likert statement per
+  page (7 numbered cells with per-question pole labels). Returning guests get a
+  **"Welcome back — this event has N new questions"** intro, and the confirmation
+  screen shows their running events / answers / hot-takes stats.
 - **Portable profiles** — answers are saved to a profile keyed by phone. The next
   event you're invited to **pre-fills everything you've already answered** and
   only asks what's new; the profile accumulates and sharpens over time.
@@ -35,12 +40,27 @@ without a server.
   and developmental closeness. See [the model](#the-matching-model).
 - **Radar chart** — the reveal overlays both people across seven trait axes so you
   can *see* how close you are, with a compatibility breakdown and MBTI/ego badges.
-- **The reveal** — synchronized countdown, match card with score, radar +
-  breakdown, "why you two" explanations, full-room results, and **receipts**
-  (superlatives from the answers).
-- **Multi-device** — optional Supabase backend with realtime signups and a
-  synchronized reveal across phones. Runs fully on-device without it.
+- **The reveal** — the host schedules it ("Send matches") and every device counts
+  down to the same moment with an odometer-style timer, then: cream flip
+  name-card, "why you matched" prose, conversation starters with Shuffle, radar +
+  trait-by-trait breakdown, full-room results, and **receipts** (superlatives
+  from the answers).
+- **Reveal options** — host toggles for *full last names vs last initial* and
+  *share phone numbers vs keep them private* (private is the default; matches
+  talk through the in-app thread instead).
+- **In-app match messaging** — a per-pair thread with a system opener (the
+  notification badge on "Send a message"), so numbers never have to leave the
+  app. For real SMS relay (masked numbers), wire Twilio Proxy — see notes below.
+- **Groups & rounds** — partition the room into up to 3 match groups (matching
+  stays within each), and strike additional rounds that never repeat a previous
+  pairing.
+- **Multi-device** — optional Supabase backend with realtime signups, messages,
+  and a synchronized reveal across phones. Runs fully on-device without it.
 - **Demo event** — 11 seeded guests so you can run a full reveal immediately.
+
+**Non-goals** (deliberately not cloned): public event listings / ticket sales,
+transactional email, and carrier-grade SMS relay — the last needs a Twilio
+Proxy-style service; the schema and message thread are already shaped for it.
 
 ## Run it
 

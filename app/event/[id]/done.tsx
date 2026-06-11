@@ -10,6 +10,7 @@ import {
   Screen,
   Spacer,
 } from '../../../src/components/ui';
+import { QUESTIONS } from '../../../src/data/questions';
 import { useStore } from '../../../src/store';
 import { border, palette, space, text, type } from '../../../src/theme';
 
@@ -34,6 +35,9 @@ export default function Confirmation() {
   const profile = guest?.profileId ? profiles[guest.profileId] : undefined;
   const events = profile?.eventsAttended.length || 1;
   const answers = guest ? Object.keys(guest.answers).length : 0;
+  // "Hot takes": answered premium statements — the spicy end of the bank.
+  const answeredIds = new Set(Object.keys(profile?.answers ?? guest?.answers ?? {}));
+  const hotTakes = QUESTIONS.filter((q) => q.premium && answeredIds.has(q.id)).length;
 
   const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -52,7 +56,7 @@ export default function Confirmation() {
         <View style={styles.statsRow}>
           <Stat value={pad(events)} label="events" />
           <Stat value={pad(answers)} label="answers" />
-          <Stat value={pad(0)} label="hot takes" />
+          <Stat value={pad(hotTakes)} label="hot takes" />
         </View>
 
         <Spacer h={space.xl} />

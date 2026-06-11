@@ -52,10 +52,26 @@ create table if not exists events (
   accent          text not null default 'blue',
   themes          text[] not null default '{}',
   question_ids    text[] not null default '{}',
+  reveal_at       timestamptz, -- scheduled synchronized countdown target
   revealed_at     timestamptz,
-  results         jsonb, -- denormalized MatchResult for fast reads (matches table is the normalized form)
+  reveal_full_names boolean not null default false,
+  share_phones    boolean not null default false,
+  group_count     int not null default 1,
+  results         jsonb, -- denormalized latest MatchResult (matches table is the normalized form)
+  rounds          jsonb, -- all rounds, oldest first
   created_at      timestamptz not null default now()
 );
+
+-- ───────────────────────────────────────────────────────── match messages
+create table if not exists match_messages (
+  id            uuid primary key default gen_random_uuid(),
+  event_id      uuid not null references events (id) on delete cascade,
+  pair_key      text not null, -- sorted profile ids joined '+'
+  from_profile  text not null, -- profile id or 'system'
+  body          text not null,
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_messages_event_pair on match_messages (event_id, pair_key);
 
 -- ─────────────────────────────────────────────────────── event_participants
 create table if not exists event_participants (
@@ -88,6 +104,7 @@ create index if not exists idx_matches_event on matches (event_id);
 alter publication supabase_realtime add table event_participants;
 alter publication supabase_realtime add table events;
 alter publication supabase_realtime add table matches;
+alter publication supabase_realtime add table match_messages;
 
 -- ─────────────────────────────────────────────────────────── RLS
 alter table profiles            enable row level security;
@@ -118,3 +135,8 @@ create policy "join events"        on event_participants for all
 create policy "read matches"  on matches for select using (true);
 create policy "write matches" on matches for all using (auth.role() = 'authenticated')
   with check (auth.role() = 'authenticated');
+
+alter table match_messages enable row level security;
+create policy "read messages"  on match_messages for select using (true);
+create policy "write messages" on match_messages for all
+  using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');

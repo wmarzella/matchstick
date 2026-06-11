@@ -25,18 +25,20 @@ export function CountdownOdometer({
   overlayPrefix?: string;
   overlayStrong?: string;
 }) {
-  const bigY = useRef(new Animated.Value(0)).current;
+  const fade = useRef(new Animated.Value(1)).current;
   const fracY = useRef(new Animated.Value(0)).current;
 
-  // Big wheel: translate to the row matching `seconds` (rows are 00,01,02,…).
+  // Big number: quick fade on each tick (web-safe; the fraction wheel below
+  // carries the odometer motion).
   useEffect(() => {
-    Animated.timing(bigY, {
-      toValue: -seconds * DIGIT_H,
-      duration: 450,
+    fade.setValue(0.35);
+    Animated.timing(fade, {
+      toValue: 1,
+      duration: 350,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
+      useNativeDriver: false,
     }).start();
-  }, [seconds, bigY]);
+  }, [seconds, fade]);
 
   // Fractions wheel: spins continuously while counting.
   useEffect(() => {
@@ -45,29 +47,22 @@ export function CountdownOdometer({
         toValue: -FRACTIONS.length * FRAC_H,
         duration: 1000,
         easing: Easing.linear,
-        useNativeDriver: true,
+        useNativeDriver: false,
       }),
     );
     anim.start();
     return () => anim.stop();
   }, [fracY]);
 
-  const maxSeconds = Math.max(seconds, 5);
-  const rows = Array.from({ length: maxSeconds + 1 }, (_, i) => i);
-
   return (
     <View style={styles.wrap}>
       <View style={styles.wheels}>
-        {/* seconds wheel */}
-        <View style={[styles.window, { height: DIGIT_H }]}>
-          <Animated.View style={{ transform: [{ translateY: bigY }] }}>
-            {rows.map((n) => (
-              <View key={n} style={{ height: DIGIT_H, justifyContent: 'center' }}>
-                <Display size={84} color={text.primary}>
-                  {String(n).padStart(2, '0')}
-                </Display>
-              </View>
-            ))}
+        {/* current second */}
+        <View style={[styles.window, { height: DIGIT_H, justifyContent: 'center' }]}>
+          <Animated.View style={{ opacity: fade }}>
+            <Display size={84} color={text.primary}>
+              {String(Math.max(0, seconds)).padStart(2, '0')}
+            </Display>
           </Animated.View>
         </View>
         {/* fractions wheel */}

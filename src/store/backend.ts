@@ -9,12 +9,13 @@
  * correct at party scale.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { EventRecord, Guest, Profile } from './types';
+import type { EventRecord, Guest, Message, Profile } from './types';
 
 export interface Snapshot {
   events: EventRecord[];
   guests: Record<string, Guest[]>; // eventId -> guests
   profiles: Record<string, Profile>; // profileId -> profile
+  messages: Message[]; // in-app match threads
 }
 
 export interface Backend {

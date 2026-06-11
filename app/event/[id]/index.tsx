@@ -33,6 +33,9 @@ export default function AdminDashboard() {
     getEvent,
     guestsOf,
     calculateMatches,
+    sendMatches,
+    strikeNextRound,
+    updateEventSettings,
     addDemoParticipants,
     removeDemoParticipants,
     deleteEvent,
@@ -273,8 +276,27 @@ export default function AdminDashboard() {
       <Section
         index={4}
         title="Reveal"
-        subtitle="The big moment. Send the teaser, then reveal everyone’s match at once."
+        subtitle="The big moment. Send the teaser, then reveal everyone’s match at once — a synchronized 60-second countdown."
       >
+        {/* Options — name privacy + phone sharing */}
+        <MonoLabel size={10} color={text.whisper} style={{ marginBottom: space.m }}>
+          Options
+        </MonoLabel>
+        <OptionRow
+          label="Reveal matches’ full last names"
+          caption="Off: guests see first name + last initial."
+          value={event.revealFullNames === true}
+          onToggle={(v) => updateEventSettings(event.id, { revealFullNames: v })}
+          accent={accent}
+        />
+        <OptionRow
+          label="Share phone numbers with matches"
+          caption="Off: matches talk through the in-app thread instead."
+          value={event.sharePhones === true}
+          onToggle={(v) => updateEventSettings(event.id, { sharePhones: v })}
+          accent={accent}
+        />
+        <Spacer h={space.l} />
         <Row style={{ gap: space.m }}>
           <View style={{ flex: 1 }}>
             <AdminButton
@@ -285,13 +307,37 @@ export default function AdminDashboard() {
           </View>
           <View style={{ flex: 1 }}>
             <AdminButton
-              label="Send matches"
+              label={event.revealAt ? 'Resend matches' : 'Send matches'}
               tone="solid"
               disabled={!matched}
-              onPress={() => router.push(`/event/${event.id}/reveal`)}
+              onPress={() => {
+                sendMatches(event.id);
+                router.push(`/event/${event.id}/reveal`);
+              }}
             />
           </View>
         </Row>
+        {event.revealAt && (
+          <>
+            <Spacer h={space.m} />
+            <Body color={text.whisper} size={13}>
+              Countdown sent — matches reveal at{' '}
+              {new Date(event.revealAt).toLocaleTimeString()}.
+            </Body>
+            <Spacer h={space.l} />
+            <AdminButton
+              label={`Strike round ${(event.rounds?.length ?? 1) + 1}`}
+              onPress={() => {
+                strikeNextRound(event.id);
+                router.push(`/event/${event.id}/reveal`);
+              }}
+            />
+            <Spacer h={space.s} />
+            <Body color={text.whisper} size={13}>
+              A fresh round re-matches everyone, never repeating a previous pairing.
+            </Body>
+          </>
+        )}
       </Section>
 
       {/* Delete */}
@@ -319,6 +365,47 @@ export default function AdminDashboard() {
         ))}
       <Spacer h={space.xxl} />
     </Screen>
+  );
+}
+
+/** Reveal option toggle row (match.box "OPTIONS" under Send matches). */
+function OptionRow({
+  label,
+  caption,
+  value,
+  onToggle,
+  accent,
+}: {
+  label: string;
+  caption: string;
+  value: boolean;
+  onToggle: (v: boolean) => void;
+  accent: string;
+}) {
+  return (
+    <Pressable onPress={() => onToggle(!value)} style={styles.optionRow}>
+      <View style={{ flex: 1 }}>
+        <Body color={text.primary} weight="600" size={15}>
+          {label}
+        </Body>
+        <Body color={text.whisper} size={13}>
+          {caption}
+        </Body>
+      </View>
+      <View
+        style={[
+          styles.toggleTrack,
+          { backgroundColor: value ? accent : 'rgba(216,207,197,0.15)' },
+        ]}
+      >
+        <View
+          style={[
+            styles.toggleThumb,
+            { alignSelf: value ? 'flex-end' : 'flex-start' },
+          ]}
+        />
+      </View>
+    </Pressable>
   );
 }
 
@@ -433,4 +520,25 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   readyDot: { width: 10, height: 10, borderRadius: 5 },
+  optionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.l,
+    paddingVertical: space.m,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(216,207,197,0.08)',
+  },
+  toggleTrack: {
+    width: 46,
+    height: 26,
+    borderRadius: 13,
+    padding: 3,
+    justifyContent: 'center',
+  },
+  toggleThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: palette.creamBright,
+  },
 });

@@ -31,5 +31,8 @@
     "web": "expo start --web"
   },
   "private": true,
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": "22.x"
+  }
 }

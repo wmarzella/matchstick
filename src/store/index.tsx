@@ -23,7 +23,17 @@ import {
   Profile,
 } from './types';
 
-const uid = () => Math.random().toString(36).slice(2, 10);
+/**
+ * RFC4122-shaped v4 id (Math.random-based — not cryptographic, fine for row
+ * ids). Must be a real UUID: the Supabase schema uses uuid columns, so short
+ * ids would silently fail to sync.
+ */
+const uid = (): string =>
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 
 const slugify = (title: string) =>
   title
@@ -563,7 +573,7 @@ function makeDemoGuests(questionIds: string[], startIndex: number, count: number
       answers[qid] = clamp(1 + ((seed + wobble + 7) % 7), 1, 7);
     }
     return {
-      id: `demo-${i}-${hash(firstName + lastName) % 9999}`,
+      id: uid(), // real UUID — short ids can't sync to the uuid columns
       firstName,
       lastName,
       phone: '',
@@ -578,9 +588,11 @@ function makeDemoGuests(questionIds: string[], startIndex: number, count: number
 function seedDemo(): Snapshot {
   const themes = ['premium', 'outlook', 'introspective'] as const;
   const qs = questionsForThemes([...themes]);
+  const eventId = uid();
   const event: EventRecord = {
-    id: 'demo',
-    slug: 'demo-party',
+    id: eventId,
+    // slug 'demo' so the hardcoded /event/demo link resolves via slug lookup
+    slug: 'demo',
     title: 'Demo Launch Party',
     hostName: 'Matchstick',
     date: new Date(Date.now() + 86400000 * 7).toISOString().slice(0, 10),
@@ -594,5 +606,5 @@ function seedDemo(): Snapshot {
     isDemo: true,
   };
   const guests = makeDemoGuests(qs.map((q) => q.id), 0, DEMO_NAMES.length);
-  return { events: [event], guests: { demo: guests }, profiles: {}, messages: [] };
+  return { events: [event], guests: { [eventId]: guests }, profiles: {}, messages: [] };
 }
